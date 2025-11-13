@@ -79,7 +79,7 @@ If your research or project builds upon [**Wan2.1**](https://github.com/Wan-Vide
     - [x] Inference code of Wan2.2-Animate
     - [x] Checkpoints of Wan2.2-Animate
     - [x] ComfyUI integration
-    - [ ] Diffusers integration    
+    - [x] Diffusers integration
 
 ## Run Wan2.2
 
@@ -339,6 +339,41 @@ python generate.py --task animate-14B --ckpt_dir ./Wan2.2-Animate-14B/ --src_roo
 python -m torch.distributed.run --nnodes 1 --nproc_per_node 8 generate.py --task animate-14B --ckpt_dir ./Wan2.2-Animate-14B/ --src_root_path ./examples/wan_animate/animate/process_results/ --refert_num 1 --dit_fsdp --t5_fsdp --ulysses_size 8
 ```
 
+* Diffusers Pipeline
+
+```python
+from diffusers import WanAnimatePipeline
+from diffusers.utils import export_to_video, load_image, load_video
+
+device = "cuda:0"
+dtype = torch.bfloat16
+model_id = "Wan-AI/Wan2.2-Animate-14B-Diffusers"
+pipe = WanAnimatePipeline.from_pretrained(model_id torch_dtype=dtype)
+pipe.to(device)
+
+seed = 42
+prompt = "People in the video are doing actions."
+
+# Animation
+image = load_image("/path/to/animate/reference/image/src_ref.png")
+pose_video = load_video("/path/to/animate/pose/video/src_pose.mp4")
+face_video = load_video("/path/to/animate/face/video/src_face.mp4")
+
+animate_video = pipe(
+    image=image,
+    pose_video=pose_video,
+    face_video=face_video,
+    prompt=prompt,
+    mode="animate",
+    segment_frame_length=77,  # clip_len in original code
+    prev_segment_conditioning_frames=1,  # refert_num in original code
+    guidance_scale=1.0,
+    num_inference_steps=20,
+    generator=torch.Generator(device=device).manual_seed(seed),
+).frames[0]
+export_to_video(animate_video, "diffusers_animate.mp4", fps=30)
+```
+
 ##### (3) Run in replacement mode 
 
 * Single-GPU inference 
@@ -351,6 +386,35 @@ python generate.py --task animate-14B --ckpt_dir ./Wan2.2-Animate-14B/ --src_roo
 
 ```bash
 python -m torch.distributed.run --nnodes 1 --nproc_per_node 8 generate.py --task animate-14B --ckpt_dir ./Wan2.2-Animate-14B/ --src_root_path ./examples/wan_animate/replace/process_results/src_pose.mp4  --refert_num 1 --replace_flag --use_relighting_lora --dit_fsdp --t5_fsdp --ulysses_size 8
+```
+
+* Diffusers Pipeline
+
+```python
+# create pipeline as in the Animation code ☝️
+
+# Replacement
+image = load_image("/path/to/replace/reference/image/src_ref.png")
+pose_video = load_video("/path/to/replace/pose/video/src_pose.mp4")
+face_video = load_video("/path/to/replace/face/video/src_face.mp4")
+background_video = load_video("/path/to/replace/background/video/src_bg.mp4")
+mask_video = load_video("/path/to/replace/mask/video/src_mask.mp4")
+
+replace_video = pipe(
+    image=image,
+    pose_video=pose_video,
+    face_video=face_video,
+    background_video=background_video,
+    mask_video=mask_video,
+    prompt=prompt,
+    mode="replace",
+    segment_frame_length=77,  # clip_len in original code
+    prev_segment_conditioning_frames=1,  # refert_num in original code
+    guidance_scale=1.0,
+    num_inference_steps=20,
+    generator=torch.Generator(device=device).manual_seed(seed),
+).frames[0]
+export_to_video(replace_video, "diffusers_replace.mp4", fps=30)
 ```
 
 > 💡 If you're using **Wan-Animate**, we do not recommend using LoRA models trained on `Wan2.2`, since weight changes during training may lead to unexpected behavior.
