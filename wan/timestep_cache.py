@@ -126,3 +126,101 @@ class ZeusTimestepCache:
         if next_skip % 2 == 1 and state.prev_interp is not None:
             return state.prev_interp.clone()
         return state.prev_f[-1].clone()
+
+
+@dataclass
+class ZeusThresholdTimestepCacheConfig:
+    enabled: bool = False
+    acc_range: Tuple[int, int] = (8, 47)
+    caching_mode: str = "reuse_interp"
+    max_interval: int = 6
+    threshold: float = 0.1
+    metric: str = "rel_l1"
+    eps: float = 1e-6
+
+    def __post_init__(self):
+        if self.caching_mode not in {"reuse_interp", "interp_all", "reuse_all"}:
+            raise ValueError("ZEUS threshold caching_mode must be reuse_interp, interp_all, or reuse_all.")
+        if self.max_interval <= 0:
+            raise ValueError("ZEUS threshold max_interval must be positive.")
+        if self.threshold < 0:
+            raise ValueError("ZEUS threshold must be non-negative.")
+        if self.metric != "rel_l1":
+            raise ValueError("ZEUS threshold metric currently only supports rel_l1.")
+        if self.eps <= 0:
+            raise ValueError("ZEUS threshold eps must be positive.")
+
+
+@dataclass
+class ZeusThresholdTimestepCacheState(ZeusTimestepCacheState):
+    prev_input: Optional[torch.Tensor] = None
+    rel_l1_path: List[Tuple[int, float]] = field(default_factory=list)
+
+    def record_recompute(
+        self,
+        step_index: int,
+        output: torch.Tensor,
+        latent: torch.Tensor,
+    ) -> torch.Tensor:
+        result = super().record_recompute(step_index, output)
+        self.prev_input = latent.detach().clone()
+        return result
+
+
+class ZeusThresholdTimestepCache(ZeusTimestepCache):
+    """ZEUS-style timestep cache with latent-threshold skip decisions."""
+
+    def __init__(self, config: ZeusThresholdTimestepCacheConfig):
+        super().__init__(config)
+        self.states: Dict[Hashable, ZeusThresholdTimestepCacheState] = {}
+
+    def call(
+        self,
+        key: Hashable,
+        step_index: int,
+        compute_fn: Callable[[], torch.Tensor],
+        latent: torch.Tensor,
+    ) -> torch.Tensor:
+        state = self.states.setdefault(key, ZeusThresholdTimestepCacheState())
+
+        if self._should_skip_threshold(state, step_index, latent):
+            return self._reuse(state, step_index)
+
+        output = compute_fn()
+        return state.record_recompute(step_index, output, latent)
+
+    def summary(self) -> Dict[str, Dict[str, object]]:
+        result = super().summary()
+        for key, state in self.states.items():
+            result[str(key)].update({
+                "rel_l1_path": list(state.rel_l1_path),
+                "threshold": self.config.threshold,
+            })
+        return result
+
+    def _should_skip_threshold(
+        self,
+        state: ZeusThresholdTimestepCacheState,
+        step_index: int,
+        latent: torch.Tensor,
+    ) -> bool:
+        if not self.config.enabled or not state.has_history():
+            return False
+        if state.cons_skip >= self.config.max_interval:
+            return False
+
+        start, end = self.config.acc_range
+        if not (start <= step_index < end):
+            return False
+
+        if state.prev_input is None:
+            return False
+
+        rel_l1 = self._relative_l1(latent, state.prev_input)
+        state.rel_l1_path.append((step_index, rel_l1))
+        return rel_l1 < self.config.threshold
+
+    def _relative_l1(self, current: torch.Tensor, previous: torch.Tensor) -> float:
+        diff = (current - previous).abs().mean()
+        denom = previous.abs().mean().clamp_min(self.config.eps)
+        return (diff / denom).detach().float().item()

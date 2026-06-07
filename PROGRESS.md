@@ -28,6 +28,21 @@
 - Added experiment scripts under `experiments/zeus_timestep_cache_50step_45f_480p/` for Wan2.2 T2V-A14B, 50 steps, 45 frames, 480p, 10 prompts from `prompt.txt`, baseline vs ZEUS, ffprobe validation, PSNR, timing, speedup, cache reuse/recompute summaries, and failure records.
 - Current instance still reports no visible GPU via `nvidia-smi`; full inference/PSNR experiment execution was prepared but not run.
 
+## 2026-06-08
+
+- Verified the HyCloud OSS CLI is installed at `/usr/local/bin/oss`.
+- `oss version` reports `v1.2.36+prod`, commit `0759e529f692a8dbca86be24aece46c00abc577d`.
+- Confirmed relevant commands for later model-weight downloads: `oss login`, `oss ls -s -d oss://datasets/`, and `oss cp oss://... /hy-tmp/...`; recursive prefix download uses `oss cp oss://bucket/prefix /hy-tmp/path -r`.
+- Re-read current in-repo ZEUS implementation logic. Confirmed the implemented path is native T2V timestep cache only: `generate.py` builds `ZeusTimestepCacheConfig`, `WanT2V.generate()` wraps separate cond/uncond model calls, and `wan/timestep_cache.py` maintains independent skip/recompute history per `(model_stage, branch)`.
+- Confirmed `--block_cache none` and `--cfg_cache none` remain placeholder CLI interfaces; block cache and CFG cache behavior are not implemented in the current repo.
+- Added `zeus-threshold` timestep cache as a separate implementation without modifying the original `ZeusTimestepCache` classes. The new path compares current input latent relative-L1 distance against `--zeus_threshold` to decide reuse vs recompute, while preserving the existing `(model_stage, branch)` state separation and ZEUS output reuse modes.
+- Added CLI support for `--timestep_cache zeus-threshold` with `--zeus_threshold`, `--zeus_threshold_metric rel_l1`, and `--zeus_threshold_eps`. Block cache and CFG cache remain unimplemented placeholders.
+- Validation for `zeus-threshold`: conda and system `py_compile` passed for `generate.py`, `wan/text2video.py`, and `wan/timestep_cache.py`; a CPU dummy import-by-path check verified original fixed ZEUS skip behavior and threshold low/high latent-distance decisions.
+- Confirmed the original ZEUS implementation remains unchanged in `wan/timestep_cache.py`; the diff only appends new threshold classes. A corrected CPU smoke test verified original fixed-policy ZEUS skip/recompute and `reuse_interp` behavior.
+- Added ZEUS-threshold experiment scripts under `experiments/zeus_threshold_50step_45f_480p/` for Wan2.2 T2V-A14B, 50 steps, 45 frames, 480p, 10 prompts from `prompt.txt`, baseline plus five default thresholds `0.03 0.08 0.15 0.30 0.60`.
+- The threshold experiment script archives generated videos, full command scripts, raw logs, timing files, ffprobe JSON, PSNR JSON/logs vs baseline, failure records, per-prompt summary CSV, and aggregate-by-threshold CSV/JSON under `/hy-tmp`.
+- Validation for the threshold experiment scripts: `bash -n` passed for `run_experiments.sh`, conda `py_compile` passed for the summarizer and reused helper scripts, and the prompt parser returned 10 prompts. Full generation was not run because the current instance still has no visible GPU.
+
 ## Notes
 
 - Follow `AGENTS.md` workflow: read this file at session start, update it before session end, and keep concise session logs under `logs/`.

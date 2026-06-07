@@ -19,7 +19,11 @@ from .distributed.sequence_parallel import sp_attn_forward, sp_dit_forward
 from .distributed.util import get_world_size
 from .modules.model import WanModel
 from .modules.t5 import T5EncoderModel
-from .timestep_cache import ZeusTimestepCache
+from .timestep_cache import (
+    ZeusThresholdTimestepCache,
+    ZeusThresholdTimestepCacheConfig,
+    ZeusTimestepCache,
+)
 from .modules.vae2_1 import Wan2_1_VAE
 from .utils.fm_solvers import (
     FlowDPMSolverMultistepScheduler,
@@ -335,8 +339,13 @@ class WanT2V:
             # sample videos
             latents = noise
             timestep_cache = None
+            timestep_cache_is_threshold = isinstance(
+                timestep_cache_config, ZeusThresholdTimestepCacheConfig)
             if timestep_cache_config is not None and timestep_cache_config.enabled:
-                timestep_cache = ZeusTimestepCache(timestep_cache_config)
+                if timestep_cache_is_threshold:
+                    timestep_cache = ZeusThresholdTimestepCache(timestep_cache_config)
+                else:
+                    timestep_cache = ZeusTimestepCache(timestep_cache_config)
 
             arg_c = {'context': context, 'seq_len': seq_len}
             arg_null = {'context': context_null, 'seq_len': seq_len}
@@ -358,6 +367,17 @@ class WanT2V:
                         latent_model_input, t=timestep, **arg_c)[0]
                     noise_pred_uncond = model(
                         latent_model_input, t=timestep, **arg_null)[0]
+                elif timestep_cache_is_threshold:
+                    noise_pred_cond = timestep_cache.call(
+                        (model_stage, 'cond'),
+                        step_index,
+                        lambda: model(latent_model_input, t=timestep, **arg_c)[0],
+                        latent=latent_model_input[0])
+                    noise_pred_uncond = timestep_cache.call(
+                        (model_stage, 'uncond'),
+                        step_index,
+                        lambda: model(latent_model_input, t=timestep, **arg_null)[0],
+                        latent=latent_model_input[0])
                 else:
                     noise_pred_cond = timestep_cache.call(
                         (model_stage, 'cond'),

@@ -1,0 +1,21 @@
+# 2026-06-08 ZEUS Threshold Experiment Scripts
+
+- User requested experiment scripts for `zeus-threshold` following `AGENTS.md` archival requirements.
+- Added `experiments/zeus_threshold_50step_45f_480p/`.
+- Experiment defaults:
+  - task `t2v-A14B`
+  - checkpoint `/hy-tmp/models/Wan2.2-T2V-A14B`
+  - prompts `/hy-tmp/work/Wan2.2/prompt.txt`
+  - 50 sampling steps
+  - 45 frames
+  - 480p landscape `832*480`
+  - solver `dpm++`
+  - baseline plus five `zeus-threshold` values: `0.03 0.08 0.15 0.30 0.60`
+- `run_experiments.sh` records videos, commands, raw logs, timing files, ffprobe JSON, PSNR JSON/logs, threshold metadata, GPU info, experiment env, and failure records under `/hy-tmp`.
+- `summarize_results.py` writes per-prompt `summary.csv` and aggregate-by-threshold CSV/JSON with elapsed time, speedup, PSNR, reuse/recompute counts, skip/recompute paths, relative-L1 paths, video paths, log paths, and ffprobe JSON.
+- Reused existing `read_prompts.py` and `compute_psnr.py` helpers from the fixed ZEUS experiment directory.
+- Validation:
+  - `bash -n experiments/zeus_threshold_50step_45f_480p/run_experiments.sh`
+  - conda `py_compile` for the summarizer and reused helpers
+  - prompt parser returned 10 prompts
+- Full generation was not executed because the current instance has no visible GPU.

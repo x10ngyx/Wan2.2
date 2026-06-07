@@ -20,7 +20,10 @@ from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CON
 from wan.distributed.util import init_distributed_group
 from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.utils.utils import merge_video_audio, save_video, str2bool
-from wan.timestep_cache import ZeusTimestepCacheConfig
+from wan.timestep_cache import (
+    ZeusThresholdTimestepCacheConfig,
+    ZeusTimestepCacheConfig,
+)
 
 
 EXAMPLE_PROMPT = {
@@ -238,8 +241,8 @@ def _parse_args():
         "--timestep_cache",
         type=str,
         default="none",
-        choices=["none", "zeus"],
-        help="Timestep cache method. Use 'zeus' for ZEUS-style timestep skipping.")
+        choices=["none", "zeus", "zeus-threshold"],
+        help="Timestep cache method. Use 'zeus' for fixed ZEUS skipping or 'zeus-threshold' for latent-threshold ZEUS skipping.")
     parser.add_argument(
         "--block_cache",
         type=str,
@@ -298,6 +301,22 @@ def _parse_args():
         type=int,
         default=24,
         help="Global sampling step where ZEUS switches to lagrange-style skip scheduling.")
+    parser.add_argument(
+        "--zeus_threshold",
+        type=float,
+        default=0.1,
+        help="Latent relative-L1 threshold for zeus-threshold timestep cache.")
+    parser.add_argument(
+        "--zeus_threshold_metric",
+        type=str,
+        default="rel_l1",
+        choices=["rel_l1"],
+        help="Latent similarity metric for zeus-threshold timestep cache.")
+    parser.add_argument(
+        "--zeus_threshold_eps",
+        type=float,
+        default=1e-6,
+        help="Numerical epsilon for zeus-threshold relative-L1 metric.")
 
     # animate
     parser.add_argument(
@@ -505,6 +524,17 @@ def generate(args):
                 lagrange_step=args.zeus_lagrange_step,
             )
             logging.info(f"Enabled ZEUS timestep cache: {timestep_cache_config}")
+        elif args.timestep_cache == "zeus-threshold":
+            timestep_cache_config = ZeusThresholdTimestepCacheConfig(
+                enabled=True,
+                acc_range=(args.zeus_acc_start, args.zeus_acc_end),
+                caching_mode=args.zeus_caching_mode,
+                max_interval=args.zeus_max_interval,
+                threshold=args.zeus_threshold,
+                metric=args.zeus_threshold_metric,
+                eps=args.zeus_threshold_eps,
+            )
+            logging.info(f"Enabled ZEUS threshold timestep cache: {timestep_cache_config}")
 
         logging.info(f"Generating video ...")
         video = wan_t2v.generate(
