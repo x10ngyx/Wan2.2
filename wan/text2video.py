@@ -19,6 +19,7 @@ from .distributed.sequence_parallel import sp_attn_forward, sp_dit_forward
 from .distributed.util import get_world_size
 from .modules.model import WanModel
 from .modules.t5 import T5EncoderModel
+from .timestep_cache import ZeusTimestepCache
 from .modules.vae2_1 import Wan2_1_VAE
 from .utils.fm_solvers import (
     FlowDPMSolverMultistepScheduler,
@@ -210,7 +211,8 @@ class WanT2V:
                  guide_scale=5.0,
                  n_prompt="",
                  seed=-1,
-                 offload_model=True):
+                 offload_model=True,
+                 timestep_cache_config=None):
         r"""
         Generates video frames from text prompt using diffusion process.
 
@@ -237,6 +239,10 @@ class WanT2V:
                 Random seed for noise generation. If -1, use random seed.
             offload_model (`bool`, *optional*, defaults to True):
                 If True, offloads models to CPU during generation to save VRAM
+            timestep_cache_config (`ZeusTimestepCacheConfig`, *optional*, defaults to None):
+                ZEUS-style timestep cache configuration. Only timestep cache is
+                handled here; block/cache and CFG-cache hooks are intentionally
+                left to the caller.
 
         Returns:
             torch.Tensor:
@@ -328,11 +334,14 @@ class WanT2V:
 
             # sample videos
             latents = noise
+            timestep_cache = None
+            if timestep_cache_config is not None and timestep_cache_config.enabled:
+                timestep_cache = ZeusTimestepCache(timestep_cache_config)
 
             arg_c = {'context': context, 'seq_len': seq_len}
             arg_null = {'context': context_null, 'seq_len': seq_len}
 
-            for _, t in enumerate(tqdm(timesteps)):
+            for step_index, t in enumerate(tqdm(timesteps)):
                 latent_model_input = latents
                 timestep = [t]
 
@@ -340,13 +349,24 @@ class WanT2V:
 
                 model = self._prepare_model_for_timestep(
                     t, boundary, offload_model)
+                model_stage = 'high' if t.item() >= boundary else 'low'
                 sample_guide_scale = guide_scale[1] if t.item(
                 ) >= boundary else guide_scale[0]
 
-                noise_pred_cond = model(
-                    latent_model_input, t=timestep, **arg_c)[0]
-                noise_pred_uncond = model(
-                    latent_model_input, t=timestep, **arg_null)[0]
+                if timestep_cache is None:
+                    noise_pred_cond = model(
+                        latent_model_input, t=timestep, **arg_c)[0]
+                    noise_pred_uncond = model(
+                        latent_model_input, t=timestep, **arg_null)[0]
+                else:
+                    noise_pred_cond = timestep_cache.call(
+                        (model_stage, 'cond'),
+                        step_index,
+                        lambda: model(latent_model_input, t=timestep, **arg_c)[0])
+                    noise_pred_uncond = timestep_cache.call(
+                        (model_stage, 'uncond'),
+                        step_index,
+                        lambda: model(latent_model_input, t=timestep, **arg_null)[0])
 
                 noise_pred = noise_pred_uncond + sample_guide_scale * (
                     noise_pred_cond - noise_pred_uncond)
@@ -358,6 +378,9 @@ class WanT2V:
                     return_dict=False,
                     generator=seed_g)[0]
                 latents = [temp_x0.squeeze(0)]
+
+            if timestep_cache is not None and self.rank == 0:
+                logging.info(f"ZEUS timestep cache summary: {timestep_cache.summary()}")
 
             x0 = latents
             if offload_model:

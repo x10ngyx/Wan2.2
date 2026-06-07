@@ -1,5 +1,6 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import argparse
+import ast
 import logging
 import os
 import sys
@@ -19,6 +20,7 @@ from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CON
 from wan.distributed.util import init_distributed_group
 from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.utils.utils import merge_video_audio, save_video, str2bool
+from wan.timestep_cache import ZeusTimestepCacheConfig
 
 
 EXAMPLE_PROMPT = {
@@ -100,6 +102,17 @@ def _validate_args(args):
         assert args.size in SUPPORTED_SIZES[
             args.
             task], f"Unsupport size {args.size} for task {args.task}, supported sizes are: {', '.join(SUPPORTED_SIZES[args.task])}"
+
+
+def _tuple_of_ints(value):
+    try:
+        parsed = ast.literal_eval(value)
+    except (SyntaxError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(
+            "Expected a tuple of ints, e.g. '(0,1)'") from exc
+    if not isinstance(parsed, tuple) or not all(isinstance(i, int) for i in parsed):
+        raise argparse.ArgumentTypeError("Expected a tuple of ints, e.g. '(0,1)'")
+    return parsed
 
 
 def _parse_args():
@@ -221,6 +234,70 @@ def _parse_args():
         action="store_true",
         default=False,
         help="Whether to convert model paramerters dtype.")
+    parser.add_argument(
+        "--timestep_cache",
+        type=str,
+        default="none",
+        choices=["none", "zeus"],
+        help="Timestep cache method. Use 'zeus' for ZEUS-style timestep skipping.")
+    parser.add_argument(
+        "--block_cache",
+        type=str,
+        default="none",
+        choices=["none"],
+        help="Reserved block cache interface. Currently only 'none' is implemented.")
+    parser.add_argument(
+        "--cfg_cache",
+        type=str,
+        default="none",
+        choices=["none"],
+        help="Reserved CFG cache interface. Currently only 'none' is implemented.")
+    parser.add_argument(
+        "--zeus_acc_start",
+        type=int,
+        default=8,
+        help="First global sampling step index eligible for ZEUS timestep cache.")
+    parser.add_argument(
+        "--zeus_acc_end",
+        type=int,
+        default=47,
+        help="Exclusive global sampling step index limit for ZEUS timestep cache.")
+    parser.add_argument(
+        "--zeus_denominator",
+        type=int,
+        default=3,
+        help="ZEUS sparsity pattern denominator.")
+    parser.add_argument(
+        "--zeus_modular",
+        type=_tuple_of_ints,
+        default=(0, 1),
+        help="ZEUS sparsity pattern residues, e.g. '(0,1)'.")
+    parser.add_argument(
+        "--zeus_caching_mode",
+        type=str,
+        default="reuse_interp",
+        choices=["reuse_interp", "interp_all", "reuse_all"],
+        help="ZEUS output reconstruction mode.")
+    parser.add_argument(
+        "--zeus_max_interval",
+        type=int,
+        default=6,
+        help="Maximum consecutive ZEUS skipped timesteps per model-stage/branch state.")
+    parser.add_argument(
+        "--zeus_lagrange_term",
+        type=int,
+        default=4,
+        help="ZEUS lagrange schedule term. The Wan flow path uses this for official skip scheduling.")
+    parser.add_argument(
+        "--zeus_lagrange_int",
+        type=int,
+        default=4,
+        help="ZEUS lagrange schedule interval.")
+    parser.add_argument(
+        "--zeus_lagrange_step",
+        type=int,
+        default=24,
+        help="Global sampling step where ZEUS switches to lagrange-style skip scheduling.")
 
     # animate
     parser.add_argument(
@@ -414,6 +491,21 @@ def generate(args):
             convert_model_dtype=args.convert_model_dtype,
         )
 
+        timestep_cache_config = None
+        if args.timestep_cache == "zeus":
+            timestep_cache_config = ZeusTimestepCacheConfig(
+                enabled=True,
+                acc_range=(args.zeus_acc_start, args.zeus_acc_end),
+                denominator=args.zeus_denominator,
+                modular=args.zeus_modular,
+                caching_mode=args.zeus_caching_mode,
+                max_interval=args.zeus_max_interval,
+                lagrange_term=args.zeus_lagrange_term,
+                lagrange_int=args.zeus_lagrange_int,
+                lagrange_step=args.zeus_lagrange_step,
+            )
+            logging.info(f"Enabled ZEUS timestep cache: {timestep_cache_config}")
+
         logging.info(f"Generating video ...")
         video = wan_t2v.generate(
             args.prompt,
@@ -424,7 +516,8 @@ def generate(args):
             sampling_steps=args.sample_steps,
             guide_scale=args.sample_guide_scale,
             seed=args.base_seed,
-            offload_model=args.offload_model)
+            offload_model=args.offload_model,
+            timestep_cache_config=timestep_cache_config)
     elif "ti2v" in args.task:
         logging.info("Creating WanTI2V pipeline.")
         wan_ti2v = wan.WanTI2V(

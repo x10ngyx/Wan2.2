@@ -1,0 +1,21 @@
+# 2026-06-08 ZEUS Timestep Cache Implementation
+
+- User decided to implement ZEUS as the timestep cache only, leaving interfaces for block cache and CFG cache.
+- Added `wan/timestep_cache.py`:
+  - `ZeusTimestepCacheConfig`
+  - `ZeusTimestepCacheState`
+  - `ZeusTimestepCache`
+- Integrated timestep cache only in native T2V path:
+  - `WanT2V.generate()` now accepts `timestep_cache_config`.
+  - Each actual model branch call can go through `ZeusTimestepCache.call(...)`.
+  - Cache states are keyed by `(model_stage, branch)`: `high/cond`, `high/uncond`, `low/cond`, `low/uncond`.
+  - This prevents high-noise and low-noise model outputs from being extrapolated across the Wan2.2 boundary.
+- Added CLI flags in `generate.py`:
+  - `--timestep_cache {none,zeus}`
+  - ZEUS controls: `--zeus_acc_start`, `--zeus_acc_end`, `--zeus_denominator`, `--zeus_modular`, `--zeus_caching_mode`, `--zeus_max_interval`, `--zeus_lagrange_term`, `--zeus_lagrange_int`, `--zeus_lagrange_step`
+  - Placeholder interfaces: `--block_cache none`, `--cfg_cache none`
+- Validation:
+  - `python -m py_compile generate.py wan/text2video.py wan/timestep_cache.py`
+  - `/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m py_compile generate.py wan/text2video.py wan/timestep_cache.py`
+  - CPU-only helper checks via path-based import.
+- Full video generation was not run because the current instance is not in GPU mode.
