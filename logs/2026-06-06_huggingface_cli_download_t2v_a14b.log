@@ -1,0 +1,66 @@
+⚠️  Warning: 'huggingface-cli download' is deprecated. Use 'hf download' instead.
+Fetching 32 files:   0%|          | 0/32 [00:00<?, ?it/s]Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Fetching 32 files:   3%|▎         | 1/32 [00:04<02:18,  4.46s/it]Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Fetching 32 files:  28%|██▊       | 9/32 [00:05<00:11,  1.99it/s]Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Fetching 32 files:  47%|████▋     | 15/32 [00:05<00:06,  2.60it/s]
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Traceback (most recent call last):
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1568, in _get_metadata_or_catch_error
+    raise FileMetadataError(
+huggingface_hub.errors.FileMetadataError: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/hy-tmp/miniconda3/envs/Wan2.2/bin/huggingface-cli", line 6, in <module>
+    sys.exit(main())
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/site-packages/huggingface_hub/commands/huggingface_cli.py", line 61, in main
+    service.run()
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/site-packages/huggingface_hub/commands/download.py", line 157, in run
+    print(self._download())  # Print path to downloaded files
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/site-packages/huggingface_hub/commands/download.py", line 191, in _download
+    return snapshot_download(
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/site-packages/huggingface_hub/_snapshot_download.py", line 332, in snapshot_download
+    thread_map(
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/site-packages/tqdm/contrib/concurrent.py", line 69, in thread_map
+    return _executor_map(ThreadPoolExecutor, fn, *iterables, **tqdm_kwargs)
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/site-packages/tqdm/contrib/concurrent.py", line 51, in _executor_map
+    return list(tqdm_class(ex.map(fn, *iterables, chunksize=chunksize), **kwargs))
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/site-packages/tqdm/std.py", line 1181, in __iter__
+    for obj in iterable:
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/concurrent/futures/_base.py", line 621, in result_iterator
+    yield _result_or_cancel(fs.pop())
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/concurrent/futures/_base.py", line 319, in _result_or_cancel
+    return fut.result(timeout)
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/concurrent/futures/_base.py", line 458, in result
+    return self.__get_result()
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/concurrent/futures/_base.py", line 403, in __get_result
+    raise self._exception
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/concurrent/futures/thread.py", line 58, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/site-packages/huggingface_hub/_snapshot_download.py", line 306, in _inner_hf_hub_download
+    return hf_hub_download(
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 990, in hf_hub_download
+    return _hf_hub_download_to_local_dir(
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1253, in _hf_hub_download_to_local_dir
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/hy-tmp/miniconda3/envs/Wan2.2/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1661, in _raise_on_head_call_error
+    raise LocalEntryNotFoundError(
+huggingface_hub.errors.LocalEntryNotFoundError: An error happened while trying to locate the file on the Hub and we cannot find the requested files in the local cache. Please check your connection and try again or make sure your Internet connection is on.

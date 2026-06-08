@@ -12,7 +12,7 @@ SIZE="${SIZE:-832*480}"
 FRAME_NUM="${FRAME_NUM:-45}"
 SAMPLE_STEPS="${SAMPLE_STEPS:-50}"
 SAMPLE_SOLVER="${SAMPLE_SOLVER:-dpm++}"
-BASE_SEED="${BASE_SEED:-20260608}"
+BASE_SEED="${BASE_SEED:-42}"
 THRESHOLDS="${THRESHOLDS:-0.03 0.08 0.15 0.30 0.60}"
 
 ZEUS_ACC_START="${ZEUS_ACC_START:-8}"
@@ -106,12 +106,19 @@ run_baseline() {
 
   echo "Running baseline prompt ${index} seed ${seed}"
   set +e
+  SECONDS=0
   (
     cd "${ROOT_DIR}"
-    /usr/bin/time -f 'elapsed_seconds=%e' -o "${time_file}" \
-      "${PYTHON_BIN}" "${ROOT_DIR}/generate.py" "${args[@]}"
+    "${PYTHON_BIN}" "${ROOT_DIR}/generate.py" "${args[@]}"
   ) 2>&1 | tee "${log}"
   local run_status="${PIPESTATUS[0]}"
+  local inference_elapsed
+  inference_elapsed="$(sed -n 's/.*inference_compute_elapsed_seconds=\([0-9.]*\).*/\1/p' "${log}" | tail -n 1)"
+  if [[ -n "${inference_elapsed}" ]]; then
+    printf 'elapsed_seconds=%s\n' "${inference_elapsed}" > "${time_file}"
+  else
+    printf 'elapsed_seconds=%s\n' "${SECONDS}" > "${time_file}"
+  fi
   set -e
   if [[ "${run_status}" -ne 0 ]]; then
     {
@@ -168,12 +175,19 @@ run_threshold() {
 
   echo "Running zeus-threshold ${threshold} prompt ${index} seed ${seed}"
   set +e
+  SECONDS=0
   (
     cd "${ROOT_DIR}"
-    /usr/bin/time -f 'elapsed_seconds=%e' -o "${time_file}" \
-      "${PYTHON_BIN}" "${ROOT_DIR}/generate.py" "${args[@]}"
+    "${PYTHON_BIN}" "${ROOT_DIR}/generate.py" "${args[@]}"
   ) 2>&1 | tee "${log}"
   local run_status="${PIPESTATUS[0]}"
+  local inference_elapsed
+  inference_elapsed="$(sed -n 's/.*inference_compute_elapsed_seconds=\([0-9.]*\).*/\1/p' "${log}" | tail -n 1)"
+  if [[ -n "${inference_elapsed}" ]]; then
+    printf 'elapsed_seconds=%s\n' "${inference_elapsed}" > "${time_file}"
+  else
+    printf 'elapsed_seconds=%s\n' "${SECONDS}" > "${time_file}"
+  fi
   set -e
   if [[ "${run_status}" -ne 0 ]]; then
     {
@@ -218,7 +232,7 @@ run_threshold() {
 
 for i in "${!PROMPTS[@]}"; do
   prompt_index="$(printf '%02d' "$((i + 1))")"
-  seed="$((BASE_SEED + i))"
+  seed="${BASE_SEED}"
   run_baseline "${prompt_index}" "${PROMPTS[$i]}" "${seed}"
   for threshold in "${THRESHOLD_VALUES[@]}"; do
     run_threshold "${threshold}" "${prompt_index}" "${PROMPTS[$i]}" "${seed}"

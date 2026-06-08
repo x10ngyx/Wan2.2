@@ -40,6 +40,13 @@ def sum_cache(summary, field: str) -> int:
     return total
 
 
+def count_unique_steps(summary, field: str) -> int:
+    steps = set()
+    for item in summary.values():
+        steps.update(int(step) for step in item.get(field, []))
+    return len(steps)
+
+
 def collect_paths(summary, field: str) -> str:
     parts = []
     for key, item in sorted(summary.items()):
@@ -86,8 +93,10 @@ def main() -> None:
                 "min_psnr": psnr["min_psnr"],
                 "max_psnr": psnr["max_psnr"],
                 "psnr_frames": psnr["frames"],
-                "zeus_threshold_reuse_count": sum_cache(cache_summary, "reuse"),
-                "zeus_threshold_recompute_count": sum_cache(cache_summary, "recompute"),
+                "zeus_threshold_reuse_count": count_unique_steps(cache_summary, "skipping_path"),
+                "zeus_threshold_recompute_count": count_unique_steps(cache_summary, "recompute_path"),
+                "zeus_threshold_reuse_branch_call_count": sum_cache(cache_summary, "reuse"),
+                "zeus_threshold_recompute_branch_call_count": sum_cache(cache_summary, "recompute"),
                 "zeus_threshold_skipping_path": collect_paths(cache_summary, "skipping_path"),
                 "zeus_threshold_recompute_path": collect_paths(cache_summary, "recompute_path"),
                 "zeus_threshold_rel_l1_path": collect_paths(cache_summary, "rel_l1_path"),
@@ -125,6 +134,8 @@ def main() -> None:
             "min_psnr": min(float(row["min_psnr"]) for row in subset),
             "total_reuse_count": sum(int(row["zeus_threshold_reuse_count"]) for row in subset),
             "total_recompute_count": sum(int(row["zeus_threshold_recompute_count"]) for row in subset),
+            "total_reuse_branch_call_count": sum(int(row["zeus_threshold_reuse_branch_call_count"]) for row in subset),
+            "total_recompute_branch_call_count": sum(int(row["zeus_threshold_recompute_branch_call_count"]) for row in subset),
         })
 
     aggregate_csv = output.parent / "aggregate_by_threshold.csv"

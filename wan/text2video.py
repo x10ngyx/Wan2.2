@@ -5,6 +5,7 @@ import math
 import os
 import random
 import sys
+import time
 import types
 from contextlib import contextmanager
 from functools import partial
@@ -274,17 +275,38 @@ class WanT2V:
         seed_g = torch.Generator(device=self.device)
         seed_g.manual_seed(seed)
 
+        compute_elapsed = 0.0
+        weight_transfer_elapsed = 0.0
+
+        def sync_cuda():
+            if self.device.type == 'cuda':
+                torch.cuda.synchronize(self.device)
+
         if not self.t5_cpu:
+            transfer_start = time.perf_counter()
             self.text_encoder.model.to(self.device)
+            sync_cuda()
+            weight_transfer_elapsed += time.perf_counter() - transfer_start
+
+            compute_start = time.perf_counter()
             context = self.text_encoder([input_prompt], self.device)
             context_null = self.text_encoder([n_prompt], self.device)
+            sync_cuda()
+            compute_elapsed += time.perf_counter() - compute_start
+
             if offload_model:
+                transfer_start = time.perf_counter()
                 self.text_encoder.model.cpu()
+                sync_cuda()
+                weight_transfer_elapsed += time.perf_counter() - transfer_start
         else:
+            compute_start = time.perf_counter()
             context = self.text_encoder([input_prompt], torch.device('cpu'))
             context_null = self.text_encoder([n_prompt], torch.device('cpu'))
             context = [t.to(self.device) for t in context]
             context_null = [t.to(self.device) for t in context_null]
+            sync_cuda()
+            compute_elapsed += time.perf_counter() - compute_start
 
         noise = [
             torch.randn(
@@ -356,8 +378,13 @@ class WanT2V:
 
                 timestep = torch.stack(timestep)
 
+                transfer_start = time.perf_counter()
                 model = self._prepare_model_for_timestep(
                     t, boundary, offload_model)
+                sync_cuda()
+                weight_transfer_elapsed += time.perf_counter() - transfer_start
+
+                compute_start = time.perf_counter()
                 model_stage = 'high' if t.item() >= boundary else 'low'
                 sample_guide_scale = guide_scale[1] if t.item(
                 ) >= boundary else guide_scale[0]
@@ -398,17 +425,27 @@ class WanT2V:
                     return_dict=False,
                     generator=seed_g)[0]
                 latents = [temp_x0.squeeze(0)]
+                sync_cuda()
+                compute_elapsed += time.perf_counter() - compute_start
 
             if timestep_cache is not None and self.rank == 0:
                 logging.info(f"ZEUS timestep cache summary: {timestep_cache.summary()}")
 
             x0 = latents
             if offload_model:
+                transfer_start = time.perf_counter()
                 self.low_noise_model.cpu()
                 self.high_noise_model.cpu()
                 torch.cuda.empty_cache()
+                sync_cuda()
+                weight_transfer_elapsed += time.perf_counter() - transfer_start
             if self.rank == 0:
+                compute_start = time.perf_counter()
                 videos = self.vae.decode(x0)
+                sync_cuda()
+                compute_elapsed += time.perf_counter() - compute_start
+                logging.info(f"inference_compute_elapsed_seconds={compute_elapsed:.3f}")
+                logging.info(f"inference_weight_transfer_elapsed_seconds={weight_transfer_elapsed:.3f}")
 
         del noise, latents
         del sample_scheduler

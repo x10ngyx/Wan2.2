@@ -4,6 +4,7 @@ import ast
 import logging
 import os
 import sys
+import time
 import warnings
 from datetime import datetime
 
@@ -537,6 +538,7 @@ def generate(args):
             logging.info(f"Enabled ZEUS threshold timestep cache: {timestep_cache_config}")
 
         logging.info(f"Generating video ...")
+        inference_start = time.perf_counter()
         video = wan_t2v.generate(
             args.prompt,
             size=SIZE_CONFIGS[args.size],
@@ -548,6 +550,8 @@ def generate(args):
             seed=args.base_seed,
             offload_model=args.offload_model,
             timestep_cache_config=timestep_cache_config)
+        inference_elapsed = time.perf_counter() - inference_start
+        logging.info(f"generation_wall_elapsed_seconds={inference_elapsed:.3f}")
     elif "ti2v" in args.task:
         logging.info("Creating WanTI2V pipeline.")
         wan_ti2v = wan.WanTI2V(

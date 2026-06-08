@@ -1,0 +1,8 @@
+{
+  "num_pairs": 10,
+  "total_baseline_elapsed_seconds": 5262.025,
+  "total_zeus_elapsed_seconds": 2649.24,
+  "overall_speedup": 1.9862394498044722,
+  "mean_psnr": 23.70506666666667,
+  "summary_csv": "/hy-tmp/wan22_zeus_timestep_cache_50step_45f_480p_full_20260608_114307/results/summary.csv"
+}

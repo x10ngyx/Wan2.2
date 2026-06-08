@@ -1,0 +1,103 @@
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.)
+Couldn't access the Hub to check for update but local file already exists. Defaulting to existing file. (error: _ssl.c:1000: The handshake operation timed out)
+No local file found. Retrying..
+No local file found. Retrying..
+No local file found. Retrying..
+No local file found. Retrying..
+No local file found. Retrying..
+No local file found. Retrying..
+No local file found. Retrying..
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00004-of-00006.safetensors
+Retrying in 1s [Retry 1/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00003-of-00006.safetensors
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00005-of-00006.safetensors
+Retrying in 1s [Retry 1/5].
+Retrying in 1s [Retry 1/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model.safetensors.index.json
+Retrying in 1s [Retry 1/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00006-of-00006.safetensors
+Retrying in 1s [Retry 1/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/models_t5_umt5-xxl-enc-bf16.pth
+Retrying in 1s [Retry 1/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/nohup.out
+Retrying in 1s [Retry 1/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00004-of-00006.safetensors
+Retrying in 2s [Retry 2/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00005-of-00006.safetensors
+Retrying in 2s [Retry 2/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00003-of-00006.safetensors
+Retrying in 2s [Retry 2/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/models_t5_umt5-xxl-enc-bf16.pth
+Retrying in 2s [Retry 2/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model.safetensors.index.json
+Retrying in 2s [Retry 2/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00006-of-00006.safetensors
+Retrying in 2s [Retry 2/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/nohup.out
+Retrying in 2s [Retry 2/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00004-of-00006.safetensors
+Retrying in 4s [Retry 3/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00005-of-00006.safetensors
+Retrying in 4s [Retry 3/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00003-of-00006.safetensors
+Retrying in 4s [Retry 3/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/models_t5_umt5-xxl-enc-bf16.pth
+Retrying in 4s [Retry 3/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model.safetensors.index.json
+Retrying in 4s [Retry 3/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00006-of-00006.safetensors
+Retrying in 4s [Retry 3/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/nohup.out
+Retrying in 4s [Retry 3/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00004-of-00006.safetensors
+Retrying in 8s [Retry 4/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00005-of-00006.safetensors
+Retrying in 8s [Retry 4/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00003-of-00006.safetensors
+Retrying in 8s [Retry 4/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/models_t5_umt5-xxl-enc-bf16.pth
+Retrying in 8s [Retry 4/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model.safetensors.index.json
+Retrying in 8s [Retry 4/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00006-of-00006.safetensors
+Retrying in 8s [Retry 4/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/nohup.out
+Retrying in 8s [Retry 4/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00004-of-00006.safetensors
+Retrying in 8s [Retry 5/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00005-of-00006.safetensors
+Retrying in 8s [Retry 5/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00003-of-00006.safetensors
+Retrying in 8s [Retry 5/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/models_t5_umt5-xxl-enc-bf16.pth
+Retrying in 8s [Retry 5/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model.safetensors.index.json
+Retrying in 8s [Retry 5/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00006-of-00006.safetensors
+Retrying in 8s [Retry 5/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/nohup.out
+Retrying in 8s [Retry 5/5].
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00004-of-00006.safetensors
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00005-of-00006.safetensors
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00003-of-00006.safetensors
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model.safetensors.index.json
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/models_t5_umt5-xxl-enc-bf16.pth
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/low_noise_model/diffusion_pytorch_model-00006-of-00006.safetensors
+'timed out' thrown while requesting HEAD https://hf-mirror.com/Wan-AI/Wan2.2-T2V-A14B/resolve/c8c270b13ee05bfa474194ac9fb07a5868a97cea/nohup.out
+Error: Local entry not found. Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.
+Set HF_DEBUG=1 as environment variable for full traceback.

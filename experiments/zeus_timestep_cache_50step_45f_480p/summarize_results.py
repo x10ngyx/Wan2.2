@@ -32,6 +32,13 @@ def sum_cache(summary, field: str) -> int:
     return total
 
 
+def count_unique_steps(summary, field: str) -> int:
+    steps = set()
+    for item in summary.values():
+        steps.update(int(step) for step in item.get(field, []))
+    return len(steps)
+
+
 def collect_paths(summary, field: str) -> str:
     parts = []
     for key, item in sorted(summary.items()):
@@ -68,8 +75,10 @@ def main() -> None:
             "mean_psnr": psnr["mean_psnr"],
             "min_psnr": psnr["min_psnr"],
             "psnr_frames": psnr["frames"],
-            "zeus_reuse_count": sum_cache(cache_summary, "reuse"),
-            "zeus_recompute_count": sum_cache(cache_summary, "recompute"),
+            "zeus_reuse_count": count_unique_steps(cache_summary, "skipping_path"),
+            "zeus_recompute_count": count_unique_steps(cache_summary, "recompute_path"),
+            "zeus_reuse_branch_call_count": sum_cache(cache_summary, "reuse"),
+            "zeus_recompute_branch_call_count": sum_cache(cache_summary, "recompute"),
             "zeus_skipping_path": collect_paths(cache_summary, "skipping_path"),
             "zeus_recompute_path": collect_paths(cache_summary, "recompute_path"),
             "baseline_video": str(baseline_video),
