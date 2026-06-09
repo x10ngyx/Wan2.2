@@ -139,6 +139,9 @@
 
 - 2026-06-09 block-cache OOM follow-up: confirmed block cache stores only the previous cache tensors per block/group, not all historical steps, but BWCache stores full per-block `last_x_m` tensors for each active `(stage, branch)`. Improved the stage-switch memory fix by moving completed-stage block-cache clearing before `_prepare_model_for_timestep()` to reduce high->low transfer peak memory. Also changed BWCache and block-group `clear_stage()` to archive summary metadata before freeing tensors so final result tables retain high-stage reuse/recompute traces after memory cleanup. Validation passed with conda `py_compile` and CPU archive-summary checks.
 
+
+- 2026-06-09 block-cache-only retry2 launched: stopped the previous retry session because it was started before the summary-archive/early-stage-clear fix. Archived its partial log/time under `failed_history/` and restarted the same experiment root in tmux session `block_cache_only_p01_retry2_1330` using commit `4ad3615`. Initial pane confirmed baseline was skipped and `bwcache_th_0p05` restarted again.
+
 ## Notes
 
 - Follow `AGENTS.md` workflow: read this file at session start, update it before session end, and keep concise session logs under `logs/`.
