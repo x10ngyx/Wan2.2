@@ -10,6 +10,7 @@ class BWBlockCacheConfig:
     thresh: float = 0.15
     reuse_interval: int = 3
     last_step: float = 0.5
+    metric: str = "pooled_rel_l1"
 
     def __post_init__(self):
         if self.thresh < 0:
@@ -18,6 +19,8 @@ class BWBlockCacheConfig:
             raise ValueError("BWCache reuse_interval must be positive.")
         if self.last_step < 0:
             raise ValueError("BWCache last_step must be non-negative.")
+        if self.metric not in {"pooled_rel_l1", "full_rel_l1"}:
+            raise ValueError("BWCache metric must be pooled_rel_l1 or full_rel_l1.")
 
 
 @dataclass
@@ -118,4 +121,5 @@ class BWBlockCache:
             "thresh": self.config.thresh,
             "reuse_interval": self.config.reuse_interval,
             "last_step": self.config.last_step,
+            "metric": self.config.metric,
         }

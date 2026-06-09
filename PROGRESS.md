@@ -142,6 +142,9 @@
 
 - 2026-06-09 block-cache-only retry2 launched: stopped the previous retry session because it was started before the summary-archive/early-stage-clear fix. Archived its partial log/time under `failed_history/` and restarted the same experiment root in tmux session `block_cache_only_p01_retry2_1330` using commit `4ad3615`. Initial pane confirmed baseline was skipped and `bwcache_th_0p05` restarted again.
 
+
+- 2026-06-09 BWCache pooled feature update: changed BWCache feature storage to support `pooled_rel_l1` vs `full_rel_l1` metrics, defaulting to `pooled_rel_l1` so BWCache stores token-pooled per-block features instead of full `[B, L, C]` features. Added CLI `--bwcache_metric` and updated the block-cache-only experiment runner/README to record and pass `BWCACHE_METRIC=pooled_rel_l1`. This aligns BWCache feature memory behavior with the block-group cache design while preserving `full_rel_l1` as an opt-in mode. Validation passed with conda `py_compile`, `generate.py --help`, and `bash -n` for the runner.
+
 ## Notes
 
 - Follow `AGENTS.md` workflow: read this file at session start, update it before session end, and keep concise session logs under `logs/`.

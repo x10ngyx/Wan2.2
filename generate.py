@@ -269,6 +269,12 @@ def _parse_args():
         default=0.5,
         help="BWCache tail recompute setting. Values below 1 are multiplied by the trigger step index; values >=1 are absolute tail length.")
     parser.add_argument(
+        "--bwcache_metric",
+        type=str,
+        default="pooled_rel_l1",
+        choices=["pooled_rel_l1", "full_rel_l1"],
+        help="BWCache similarity metric. pooled_rel_l1 stores pooled block features to reduce memory.")
+    parser.add_argument(
         "--block_group_size",
         type=int,
         default=5,
@@ -631,6 +637,7 @@ def generate(args):
                 thresh=args.bwcache_thresh,
                 reuse_interval=args.bwcache_reuse_interval,
                 last_step=args.bwcache_last_step,
+                metric=args.bwcache_metric,
             )
             logging.info(f"Enabled BWCache block cache: {block_cache_config}")
 

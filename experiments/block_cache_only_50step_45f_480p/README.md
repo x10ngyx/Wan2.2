@@ -15,6 +15,7 @@ This experiment runs a one-prompt block-cache-only comparison for Wan2.2 T2V-A14
 - CFG cache: `none`
 - baseline: no cache
 - BWCache thresholds: `0.05 0.15 0.30`
+- BWCache metric: `pooled_rel_l1`
 - block-group thresholds: `0.01 0.03 0.05`
 - block-group size: `5`
 - block-group metric: `pooled_rel_l1`
@@ -30,6 +31,7 @@ Useful overrides:
 ```bash
 EXP_ROOT=/hy-tmp/wan22_block_cache_only_custom \
 BWCACHE_THRESHOLDS="0.05 0.15 0.30" \
+BWCACHE_METRIC=pooled_rel_l1 \
 BLOCK_GROUP_THRESHOLDS="0.01 0.03 0.05" \
 PROMPT_OFFSET=0 \
 bash experiments/block_cache_only_50step_45f_480p/run_experiments.sh

@@ -229,6 +229,7 @@ class WanAttentionBlock(nn.Module):
         bwcache_block_index=None,
         bwcache_cal_list_updated=True,
         bwcache_is_first_step=True,
+        bwcache_metric="pooled_rel_l1",
     ):
         r"""
         Args:
@@ -253,6 +254,7 @@ class WanAttentionBlock(nn.Module):
                 bwcache_block_index,
                 bwcache_cal_list_updated,
                 bwcache_is_first_step,
+                bwcache_metric,
             )
         y = self.self_attn(x_m, seq_lens, grid_sizes, freqs)
         with torch.amp.autocast('cuda', dtype=torch.float32):
@@ -282,14 +284,20 @@ class WanAttentionBlock(nn.Module):
         block_index,
         cal_list_updated,
         is_first_step,
+        metric,
     ):
-        cur_x_m = x_m.detach().clone()
+        if metric == "pooled_rel_l1":
+            cur_x_m = x_m.float().mean(dim=1).detach().clone()
+        elif metric == "full_rel_l1":
+            cur_x_m = x_m.to(dtype=x_m.dtype).detach().clone()
+        else:
+            raise ValueError(f"Unsupported BWCache metric: {metric}")
         last_x_m = bwcache_state.last_x_m[block_index]
         if cal_list_updated or is_first_step or last_x_m is None:
             l1 = 1000.0
         else:
-            l1 = ((cur_x_m - last_x_m).abs().mean() /
-                  last_x_m.abs().mean()).cpu().item()
+            l1 = ((cur_x_m.float() - last_x_m.float()).abs().mean() /
+                  last_x_m.float().abs().mean()).cpu().item()
         bwcache_state.last_x_m[block_index] = cur_x_m
         return l1
 
@@ -608,6 +616,7 @@ class WanModel(ModelMixin, ConfigMixin):
                         bwcache_block_index=block_index,
                         bwcache_cal_list_updated=bw_state.cal_list_updated,
                         bwcache_is_first_step=block_cache_step_index == 0,
+                        bwcache_metric=block_cache.config.metric,
                     )
                     acu_l1 += l1
                 bw_state.previous_residual = (x - origin_x).detach().clone()

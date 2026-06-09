@@ -24,6 +24,7 @@ EXPECTED_BLOCK_GROUP_THRESHOLD_COUNT="${EXPECTED_BLOCK_GROUP_THRESHOLD_COUNT:-3}
 
 BWCACHE_REUSE_INTERVAL="${BWCACHE_REUSE_INTERVAL:-3}"
 BWCACHE_LAST_STEP="${BWCACHE_LAST_STEP:-0.5}"
+BWCACHE_METRIC="${BWCACHE_METRIC:-pooled_rel_l1}"
 
 BLOCK_GROUP_SIZE="${BLOCK_GROUP_SIZE:-5}"
 BLOCK_GROUP_METRIC="${BLOCK_GROUP_METRIC:-pooled_rel_l1}"
@@ -188,6 +189,7 @@ mkdir -p "${EXP_ROOT}"/{baseline,bwcache,block_group,thresholds,logs,commands,ff
   echo "bwcache_thresholds=${BWCACHE_THRESHOLDS}"
   echo "bwcache_reuse_interval=${BWCACHE_REUSE_INTERVAL}"
   echo "bwcache_last_step=${BWCACHE_LAST_STEP}"
+  echo "bwcache_metric=${BWCACHE_METRIC}"
   echo "block_group_thresholds=${BLOCK_GROUP_THRESHOLDS}"
   echo "block_group_size=${BLOCK_GROUP_SIZE}"
   echo "block_group_metric=${BLOCK_GROUP_METRIC}"
@@ -227,6 +229,7 @@ for threshold in "${BWCACHE_THRESHOLD_VALUES[@]}"; do
     echo "threshold=${threshold}"
     echo "reuse_interval=${BWCACHE_REUSE_INTERVAL}"
     echo "last_step=${BWCACHE_LAST_STEP}"
+    echo "metric=${BWCACHE_METRIC}"
   } > "${EXP_ROOT}/thresholds/bwcache_${label}.env"
 done
 
@@ -273,6 +276,7 @@ for threshold in "${BWCACHE_THRESHOLD_VALUES[@]}"; do
     --bwcache_thresh "${threshold}"
     --bwcache_reuse_interval "${BWCACHE_REUSE_INTERVAL}"
     --bwcache_last_step "${BWCACHE_LAST_STEP}"
+    --bwcache_metric "${BWCACHE_METRIC}"
   )
   run_generate "bwcache" "${method_id}" "${prompt_index}" "${prompt}" "${seed}" "${output}" "${log}" "${time_file}" "${cmd_file}" "${args[@]}"
   run_psnr "${method_id}" "${prompt_index}" "${output}" "${EXP_ROOT}/psnr/${method_id}/prompt_${prompt_index}.json" "${EXP_ROOT}/psnr/${method_id}/prompt_${prompt_index}.log"
