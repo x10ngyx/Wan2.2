@@ -1,0 +1,24 @@
+# 2026-06-09 CFG cache implementation
+
+- Implemented native T2V CFG cache in `wan/cfg_cache.py`.
+- Cache state is keyed by model stage (`high` / `low`) and stores:
+  - cached guidance delta: `cond - uncond`
+  - conditional prediction from the last full CFG step
+  - reuse/recompute counts, paths, diff trace, and reuse streak
+- Wired `WanT2V.generate()` so every denoising step computes the `cond` branch first.
+- On CFG cache hit, the `uncond` branch is skipped and CFG output is reconstructed as `cond + (guide_scale - 1) * cached_delta`.
+- On CFG cache miss, the `uncond` branch runs, exact CFG output is used, and the cached delta plus last-full cond prediction are refreshed.
+- Preserved cache composition order for actual branch calls: timestep cache is evaluated before model execution; block cache is only entered by model calls that timestep cache did not reuse.
+- Added CLI flags:
+  - `--cfg_cache threshold`
+  - `--cfg_start`
+  - `--cfg_end`
+  - `--cfg_threshold`
+  - `--cfg_max_reuse`
+  - `--cfg_eps`
+- Validation:
+  - `/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m py_compile generate.py wan/text2video.py wan/cfg_cache.py`
+  - `python -m py_compile generate.py wan/text2video.py wan/cfg_cache.py`
+  - `/hy-tmp/miniconda3/envs/Wan2.2/bin/python generate.py --help`
+  - CPU CFG cache logic test for recompute, reuse, max-reuse forcing, per-stage state separation, and summary output
+- No GPU generation or PSNR experiment was launched in this session.

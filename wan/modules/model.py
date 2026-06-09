@@ -225,6 +225,10 @@ class WanAttentionBlock(nn.Module):
         freqs,
         context,
         context_lens,
+        bwcache_state=None,
+        bwcache_block_index=None,
+        bwcache_cal_list_updated=True,
+        bwcache_is_first_step=True,
     ):
         r"""
         Args:
@@ -240,9 +244,17 @@ class WanAttentionBlock(nn.Module):
         assert e[0].dtype == torch.float32
 
         # self-attention
-        y = self.self_attn(
-            self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2),
-            seq_lens, grid_sizes, freqs)
+        x_m = self._modulated_norm1(x, e)
+        bwcache_l1 = None
+        if bwcache_state is not None:
+            bwcache_l1 = self._record_bwcache_l1(
+                x_m,
+                bwcache_state,
+                bwcache_block_index,
+                bwcache_cal_list_updated,
+                bwcache_is_first_step,
+            )
+        y = self.self_attn(x_m, seq_lens, grid_sizes, freqs)
         with torch.amp.autocast('cuda', dtype=torch.float32):
             x = x + y * e[2].squeeze(2)
 
@@ -256,7 +268,40 @@ class WanAttentionBlock(nn.Module):
             return x
 
         x = cross_attn_ffn(x, context, context_lens, e)
+        if bwcache_state is not None:
+            return x, bwcache_l1
         return x
+
+    def _modulated_norm1(self, x, e):
+        return self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2)
+
+    def _record_bwcache_l1(
+        self,
+        x_m,
+        bwcache_state,
+        block_index,
+        cal_list_updated,
+        is_first_step,
+    ):
+        cur_x_m = x_m.detach().clone()
+        last_x_m = bwcache_state.last_x_m[block_index]
+        if cal_list_updated or is_first_step or last_x_m is None:
+            l1 = 1000.0
+        else:
+            l1 = ((cur_x_m - last_x_m).abs().mean() /
+                  last_x_m.abs().mean()).cpu().item()
+        bwcache_state.last_x_m[block_index] = cur_x_m
+        return l1
+
+    def block_group_cache_feature(self, x, e, metric):
+        with torch.amp.autocast('cuda', dtype=torch.float32):
+            e = (self.modulation.unsqueeze(0) + e).chunk(6, dim=2)
+        x_m = self._modulated_norm1(x, e)
+        if metric == "pooled_rel_l1":
+            return x_m.float().mean(dim=1)
+        if metric == "full_rel_l1":
+            return x_m.to(dtype=x.dtype)
+        raise ValueError(f"Unsupported block-group cache metric: {metric}")
 
 
 class Head(nn.Module):
@@ -414,6 +459,16 @@ class WanModel(ModelMixin, ConfigMixin):
         context,
         seq_len,
         y=None,
+        block_cache=None,
+        block_cache_key=None,
+        block_cache_step_index=None,
+        block_cache_num_steps=None,
+        block_cache_force_recompute=False,
+        block_group_cache=None,
+        block_group_cache_key=None,
+        block_group_cache_step_index=None,
+        block_group_cache_num_steps=None,
+        block_group_cache_force_recompute=False,
     ):
         r"""
         Forward pass through the diffusion model
@@ -486,8 +541,84 @@ class WanModel(ModelMixin, ConfigMixin):
             context=context,
             context_lens=context_lens)
 
-        for block in self.blocks:
-            x = block(x, **kwargs)
+        if block_group_cache is not None:
+            if (block_group_cache_key is None or
+                    block_group_cache_step_index is None or
+                    block_group_cache_num_steps is None):
+                raise ValueError("Block-group cache requires key, step_index, and num_steps.")
+            group_size = block_group_cache.config.group_size
+            num_groups = math.ceil(len(self.blocks) / group_size)
+            group_states = block_group_cache.state(
+                block_group_cache_key,
+                num_groups,
+            )
+            for group_index, group_start in enumerate(
+                    range(0, len(self.blocks), group_size)):
+                group_end = min(group_start + group_size, len(self.blocks))
+                group_state = group_states[group_index]
+                feature = self.blocks[group_start].block_group_cache_feature(
+                    x,
+                    e0,
+                    block_group_cache.config.metric,
+                )
+                if (not block_group_cache_force_recompute and
+                        block_group_cache.should_reuse(
+                            group_state,
+                            block_group_cache_step_index,
+                            block_group_cache_num_steps,
+                            feature)):
+                    x = x + group_state.cached_residual
+                    group_state.record_reuse(block_group_cache_step_index)
+                    continue
+
+                group_input = x.detach().clone()
+                for block in self.blocks[group_start:group_end]:
+                    x = block(x, **kwargs)
+                group_state.record_recompute(
+                    block_group_cache_step_index,
+                    feature,
+                    x - group_input,
+                )
+        elif block_cache is None:
+            for block in self.blocks:
+                x = block(x, **kwargs)
+        else:
+            if block_cache_key is None or block_cache_step_index is None or block_cache_num_steps is None:
+                raise ValueError("BWCache requires key, step_index, and num_steps.")
+            bw_state = block_cache.state(
+                block_cache_key,
+                block_cache_num_steps,
+                len(self.blocks),
+                x.device,
+            )
+            cal_value = int(bw_state.cal_list[block_cache_step_index].item())
+            if (not block_cache_force_recompute and cal_value == 0 and
+                    bw_state.previous_residual is not None):
+                x = x + bw_state.previous_residual
+                bw_state.reuse_count += 1
+                bw_state.reuse_path.append(block_cache_step_index)
+            else:
+                origin_x = x.detach().clone()
+                acu_l1 = 0.0
+                for block_index, block in enumerate(self.blocks):
+                    x, l1 = block(
+                        x,
+                        **kwargs,
+                        bwcache_state=bw_state,
+                        bwcache_block_index=block_index,
+                        bwcache_cal_list_updated=bw_state.cal_list_updated,
+                        bwcache_is_first_step=block_cache_step_index == 0,
+                    )
+                    acu_l1 += l1
+                bw_state.previous_residual = (x - origin_x).detach().clone()
+                bw_state.recompute_count += 1
+                bw_state.recompute_path.append(block_cache_step_index)
+                bw_state.acu_l1_path.append((block_cache_step_index, acu_l1))
+                block_cache.update_cal_list(
+                    bw_state,
+                    block_cache_step_index,
+                    block_cache_num_steps,
+                )
 
         # head
         x = self.head(x, e)

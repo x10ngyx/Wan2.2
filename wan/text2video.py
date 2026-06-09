@@ -17,6 +17,9 @@ from tqdm import tqdm
 
 from .distributed.fsdp import shard_model
 from .distributed.sequence_parallel import sp_attn_forward, sp_dit_forward
+from .block_cache import BWBlockCache, BWBlockCacheConfig
+from .block_group_cache import BlockGroupCache, BlockGroupCacheConfig
+from .cfg_cache import CFGCache, CFGCacheConfig
 from .distributed.util import get_world_size
 from .modules.model import WanModel
 from .modules.t5 import T5EncoderModel
@@ -217,7 +220,10 @@ class WanT2V:
                  n_prompt="",
                  seed=-1,
                  offload_model=True,
-                 timestep_cache_config=None):
+                 timestep_cache_config=None,
+                 block_cache_config=None,
+                 block_group_cache_config=None,
+                 cfg_cache_config=None):
         r"""
         Generates video frames from text prompt using diffusion process.
 
@@ -245,9 +251,15 @@ class WanT2V:
             offload_model (`bool`, *optional*, defaults to True):
                 If True, offloads models to CPU during generation to save VRAM
             timestep_cache_config (`ZeusTimestepCacheConfig`, *optional*, defaults to None):
-                ZEUS-style timestep cache configuration. Only timestep cache is
-                handled here; block/cache and CFG-cache hooks are intentionally
-                left to the caller.
+                ZEUS-style timestep cache configuration.
+            block_cache_config (`BWBlockCacheConfig`, *optional*, defaults to None):
+                BWCache-style block cache configuration. It is evaluated only
+                when the timestep cache does not reuse the whole model output.
+            block_group_cache_config (`BlockGroupCacheConfig`, *optional*, defaults to None):
+                Threshold-based grouped block cache configuration.
+            cfg_cache_config (`CFGCacheConfig`, *optional*, defaults to None):
+                CFG delta cache configuration. It is evaluated as the outer
+                cond/uncond branch-selection logic.
 
         Returns:
             torch.Tensor:
@@ -369,8 +381,44 @@ class WanT2V:
                 else:
                     timestep_cache = ZeusTimestepCache(timestep_cache_config)
 
+            block_cache = None
+            if block_cache_config is not None and block_cache_config.enabled:
+                block_cache = BWBlockCache(block_cache_config)
+
+            block_group_cache = None
+            if block_group_cache_config is not None and block_group_cache_config.enabled:
+                block_group_cache = BlockGroupCache(block_group_cache_config)
+
+            cfg_cache = None
+            if cfg_cache_config is not None and cfg_cache_config.enabled:
+                cfg_cache = CFGCache(cfg_cache_config)
+
             arg_c = {'context': context, 'seq_len': seq_len}
             arg_null = {'context': context_null, 'seq_len': seq_len}
+
+            def model_forward(
+                model,
+                latent_input,
+                timestep_tensor,
+                model_stage,
+                branch,
+                kwargs,
+                force_recompute=False,
+            ):
+                return model(
+                    latent_input,
+                    t=timestep_tensor,
+                    block_cache=block_cache,
+                    block_cache_key=(model_stage, branch),
+                    block_cache_step_index=step_index,
+                    block_cache_num_steps=len(timesteps),
+                    block_cache_force_recompute=force_recompute,
+                    block_group_cache=block_group_cache,
+                    block_group_cache_key=(model_stage, branch),
+                    block_group_cache_step_index=step_index,
+                    block_group_cache_num_steps=len(timesteps),
+                    block_group_cache_force_recompute=force_recompute,
+                    **kwargs)[0]
 
             for step_index, t in enumerate(tqdm(timesteps)):
                 latent_model_input = latents
@@ -389,34 +437,74 @@ class WanT2V:
                 sample_guide_scale = guide_scale[1] if t.item(
                 ) >= boundary else guide_scale[0]
 
-                if timestep_cache is None:
-                    noise_pred_cond = model(
-                        latent_model_input, t=timestep, **arg_c)[0]
-                    noise_pred_uncond = model(
-                        latent_model_input, t=timestep, **arg_null)[0]
-                elif timestep_cache_is_threshold:
-                    noise_pred_cond = timestep_cache.call(
-                        (model_stage, 'cond'),
+                def branch_forward(branch, kwargs, force_recompute=False):
+                    cache_key = (model_stage, branch)
+                    if timestep_cache is None:
+                        return model_forward(
+                            model,
+                            latent_model_input,
+                            timestep,
+                            model_stage,
+                            branch,
+                            kwargs,
+                            force_recompute=force_recompute)
+                    if timestep_cache_is_threshold:
+                        return timestep_cache.call(
+                            cache_key,
+                            step_index,
+                            lambda: model_forward(
+                                model,
+                                latent_model_input,
+                                timestep,
+                                model_stage,
+                                branch,
+                                kwargs,
+                                force_recompute=force_recompute),
+                            latent=latent_model_input[0],
+                            force_recompute=force_recompute)
+                    return timestep_cache.call(
+                        cache_key,
                         step_index,
-                        lambda: model(latent_model_input, t=timestep, **arg_c)[0],
-                        latent=latent_model_input[0])
-                    noise_pred_uncond = timestep_cache.call(
-                        (model_stage, 'uncond'),
-                        step_index,
-                        lambda: model(latent_model_input, t=timestep, **arg_null)[0],
-                        latent=latent_model_input[0])
-                else:
-                    noise_pred_cond = timestep_cache.call(
-                        (model_stage, 'cond'),
-                        step_index,
-                        lambda: model(latent_model_input, t=timestep, **arg_c)[0])
-                    noise_pred_uncond = timestep_cache.call(
-                        (model_stage, 'uncond'),
-                        step_index,
-                        lambda: model(latent_model_input, t=timestep, **arg_null)[0])
+                        lambda: model_forward(
+                            model,
+                            latent_model_input,
+                            timestep,
+                            model_stage,
+                            branch,
+                            kwargs,
+                            force_recompute=force_recompute),
+                        force_recompute=force_recompute)
 
-                noise_pred = noise_pred_uncond + sample_guide_scale * (
-                    noise_pred_cond - noise_pred_uncond)
+                noise_pred_cond = branch_forward('cond', arg_c)
+                cfg_key = model_stage
+                if cfg_cache is not None and cfg_cache.should_reuse(
+                        cfg_key,
+                        step_index,
+                        len(timesteps),
+                        noise_pred_cond):
+                    noise_pred = cfg_cache.reuse(
+                        cfg_key,
+                        step_index,
+                        noise_pred_cond,
+                        sample_guide_scale)
+                else:
+                    force_uncond_recompute = (
+                        cfg_cache is not None and
+                        cfg_cache.config.force_uncond_recompute_on_miss)
+                    noise_pred_uncond = branch_forward(
+                        'uncond',
+                        arg_null,
+                        force_recompute=force_uncond_recompute)
+                    if cfg_cache is not None:
+                        noise_pred = cfg_cache.recompute(
+                            cfg_key,
+                            step_index,
+                            noise_pred_cond,
+                            noise_pred_uncond,
+                            sample_guide_scale)
+                    else:
+                        noise_pred = noise_pred_uncond + sample_guide_scale * (
+                            noise_pred_cond - noise_pred_uncond)
 
                 temp_x0 = sample_scheduler.step(
                     noise_pred.unsqueeze(0),
@@ -430,6 +518,12 @@ class WanT2V:
 
             if timestep_cache is not None and self.rank == 0:
                 logging.info(f"ZEUS timestep cache summary: {timestep_cache.summary()}")
+            if block_cache is not None and self.rank == 0:
+                logging.info(f"BWCache block cache summary: {block_cache.summary()}")
+            if block_group_cache is not None and self.rank == 0:
+                logging.info(f"Block-group cache summary: {block_group_cache.summary()}")
+            if cfg_cache is not None and self.rank == 0:
+                logging.info(f"CFG cache summary: {cfg_cache.summary()}")
 
             x0 = latents
             if offload_model:

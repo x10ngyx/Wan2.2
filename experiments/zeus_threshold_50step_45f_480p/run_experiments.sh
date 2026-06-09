@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-/hy-tmp/miniconda3/envs/Wan2.2/bin/python}"
 CKPT_DIR="${CKPT_DIR:-/hy-tmp/models/Wan2.2-T2V-A14B}"
 PROMPT_FILE="${PROMPT_FILE:-/hy-tmp/work/Wan2.2/prompt.txt}"
+FFPROBE_BIN="${FFPROBE_BIN:-/hy-tmp/miniconda3/envs/Wan2.2/bin/ffprobe}"
 EXP_ROOT="${EXP_ROOT:-/hy-tmp/wan22_zeus_threshold_50step_45f_480p_$(date +%Y%m%d_%H%M%S)}"
 
 TASK="${TASK:-t2v-A14B}"
@@ -14,6 +15,9 @@ SAMPLE_STEPS="${SAMPLE_STEPS:-50}"
 SAMPLE_SOLVER="${SAMPLE_SOLVER:-dpm++}"
 BASE_SEED="${BASE_SEED:-42}"
 THRESHOLDS="${THRESHOLDS:-0.03 0.08 0.15 0.30 0.60}"
+PROMPT_LIMIT="${PROMPT_LIMIT:-0}"
+EXPECTED_THRESHOLD_COUNT="${EXPECTED_THRESHOLD_COUNT:-5}"
+RESUME_EXISTING="${RESUME_EXISTING:-False}"
 
 ZEUS_ACC_START="${ZEUS_ACC_START:-8}"
 ZEUS_ACC_END="${ZEUS_ACC_END:-47}"
@@ -52,6 +56,7 @@ mkdir -p "${EXP_ROOT}"/{baseline,zeus_threshold,thresholds,logs,commands,ffprobe
   echo "python_bin=${PYTHON_BIN}"
   echo "ckpt_dir=${CKPT_DIR}"
   echo "prompt_file=${PROMPT_FILE}"
+  echo "ffprobe_bin=${FFPROBE_BIN}"
   echo "task=${TASK}"
   echo "size=${SIZE}"
   echo "frame_num=${FRAME_NUM}"
@@ -59,6 +64,9 @@ mkdir -p "${EXP_ROOT}"/{baseline,zeus_threshold,thresholds,logs,commands,ffprobe
   echo "sample_solver=${SAMPLE_SOLVER}"
   echo "base_seed=${BASE_SEED}"
   echo "thresholds=${THRESHOLDS}"
+  echo "prompt_limit=${PROMPT_LIMIT}"
+  echo "expected_threshold_count=${EXPECTED_THRESHOLD_COUNT}"
+  echo "resume_existing=${RESUME_EXISTING}"
   echo "zeus_acc_start=${ZEUS_ACC_START}"
   echo "zeus_acc_end=${ZEUS_ACC_END}"
   echo "zeus_caching_mode=${ZEUS_CACHING_MODE}"
@@ -71,13 +79,22 @@ nvidia-smi > "${EXP_ROOT}/gpu.txt" 2>&1 || true
 mapfile -t PROMPTS < <("${PYTHON_BIN}" "${TOOLS_DIR}/read_prompts.py" "${PROMPT_FILE}")
 read -r -a THRESHOLD_VALUES <<< "${THRESHOLDS}"
 
-if [[ "${#PROMPTS[@]}" -ne 10 ]]; then
-  echo "Expected 10 prompts, got ${#PROMPTS[@]} from ${PROMPT_FILE}" >&2
+if [[ "${PROMPT_LIMIT}" -gt 0 ]]; then
+  PROMPTS=("${PROMPTS[@]:0:${PROMPT_LIMIT}}")
+fi
+
+expected_prompt_count=10
+if [[ "${PROMPT_LIMIT}" -gt 0 ]]; then
+  expected_prompt_count="${PROMPT_LIMIT}"
+fi
+
+if [[ "${#PROMPTS[@]}" -ne "${expected_prompt_count}" ]]; then
+  echo "Expected ${expected_prompt_count} prompts, got ${#PROMPTS[@]} from ${PROMPT_FILE}" >&2
   exit 1
 fi
 
-if [[ "${#THRESHOLD_VALUES[@]}" -ne 5 ]]; then
-  echo "Expected 5 thresholds, got ${#THRESHOLD_VALUES[@]}: ${THRESHOLDS}" >&2
+if [[ -n "${EXPECTED_THRESHOLD_COUNT}" && "${#THRESHOLD_VALUES[@]}" -ne "${EXPECTED_THRESHOLD_COUNT}" ]]; then
+  echo "Expected ${EXPECTED_THRESHOLD_COUNT} thresholds, got ${#THRESHOLD_VALUES[@]}: ${THRESHOLDS}" >&2
   exit 1
 fi
 
@@ -95,6 +112,11 @@ run_baseline() {
   local log="${EXP_ROOT}/logs/baseline_prompt_${index}.log"
   local time_file="${EXP_ROOT}/logs/baseline_prompt_${index}.time"
   local cmd_file="${EXP_ROOT}/commands/baseline_prompt_${index}.sh"
+
+  if [[ "${RESUME_EXISTING}" == "True" && -f "${output}" && -f "${time_file}" && -s "${EXP_ROOT}/ffprobe/baseline_prompt_${index}.json" ]]; then
+    echo "Skipping existing baseline prompt ${index}"
+    return 0
+  fi
 
   local args=("${COMMON_ARGS[@]}" --prompt "${prompt}" --base_seed "${seed}" --save_file "${output}" --timestep_cache none)
 
@@ -132,7 +154,7 @@ run_baseline() {
     exit "${run_status}"
   fi
 
-  ffprobe -v error \
+  "${FFPROBE_BIN}" -v error \
     -count_frames \
     -select_streams v:0 \
     -show_entries stream=width,height,nb_frames,nb_read_frames,r_frame_rate,avg_frame_rate,duration \
@@ -151,6 +173,11 @@ run_threshold() {
   local log="${EXP_ROOT}/logs/${method_id}_prompt_${index}.log"
   local time_file="${EXP_ROOT}/logs/${method_id}_prompt_${index}.time"
   local cmd_file="${EXP_ROOT}/commands/${method_id}_prompt_${index}.sh"
+
+  if [[ "${RESUME_EXISTING}" == "True" && -f "${output}" && -f "${time_file}" && -s "${EXP_ROOT}/ffprobe/${method_id}_prompt_${index}.json" && -s "${EXP_ROOT}/psnr/${label}/prompt_${index}.json" ]]; then
+    echo "Skipping existing zeus-threshold ${threshold} prompt ${index}"
+    return 0
+  fi
 
   local args=(
     "${COMMON_ARGS[@]}"
@@ -203,7 +230,7 @@ run_threshold() {
     exit "${run_status}"
   fi
 
-  ffprobe -v error \
+  "${FFPROBE_BIN}" -v error \
     -count_frames \
     -select_streams v:0 \
     -show_entries stream=width,height,nb_frames,nb_read_frames,r_frame_rate,avg_frame_rate,duration \

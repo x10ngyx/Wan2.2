@@ -73,10 +73,16 @@ class ZeusTimestepCache:
         self.config = config
         self.states: Dict[Hashable, ZeusTimestepCacheState] = {}
 
-    def call(self, key: Hashable, step_index: int, compute_fn: Callable[[], torch.Tensor]) -> torch.Tensor:
+    def call(
+        self,
+        key: Hashable,
+        step_index: int,
+        compute_fn: Callable[[], torch.Tensor],
+        force_recompute: bool = False,
+    ) -> torch.Tensor:
         state = self.states.setdefault(key, ZeusTimestepCacheState())
 
-        if self._should_skip(state, step_index):
+        if not force_recompute and self._should_skip(state, step_index):
             return self._reuse(state, step_index)
 
         output = compute_fn()
@@ -139,8 +145,8 @@ class ZeusThresholdTimestepCacheConfig:
     eps: float = 1e-6
 
     def __post_init__(self):
-        if self.caching_mode not in {"reuse_interp", "interp_all", "reuse_all"}:
-            raise ValueError("ZEUS threshold caching_mode must be reuse_interp, interp_all, or reuse_all.")
+        if self.caching_mode not in {"reuse_interp", "interp_all", "reuse_all", "timestep_aware_interp"}:
+            raise ValueError("ZEUS threshold caching_mode must be reuse_interp, interp_all, reuse_all, or timestep_aware_interp.")
         if self.max_interval <= 0:
             raise ValueError("ZEUS threshold max_interval must be positive.")
         if self.threshold < 0:
@@ -155,6 +161,7 @@ class ZeusThresholdTimestepCacheConfig:
 class ZeusThresholdTimestepCacheState(ZeusTimestepCacheState):
     prev_input: Optional[torch.Tensor] = None
     rel_l1_path: List[Tuple[int, float]] = field(default_factory=list)
+    recompute_steps: List[int] = field(default_factory=list)
 
     def record_recompute(
         self,
@@ -164,6 +171,9 @@ class ZeusThresholdTimestepCacheState(ZeusTimestepCacheState):
     ) -> torch.Tensor:
         result = super().record_recompute(step_index, output)
         self.prev_input = latent.detach().clone()
+        self.recompute_steps.append(step_index)
+        if len(self.recompute_steps) > 3:
+            self.recompute_steps.pop(0)
         return result
 
 
@@ -180,10 +190,11 @@ class ZeusThresholdTimestepCache(ZeusTimestepCache):
         step_index: int,
         compute_fn: Callable[[], torch.Tensor],
         latent: torch.Tensor,
+        force_recompute: bool = False,
     ) -> torch.Tensor:
         state = self.states.setdefault(key, ZeusThresholdTimestepCacheState())
 
-        if self._should_skip_threshold(state, step_index, latent):
+        if not force_recompute and self._should_skip_threshold(state, step_index, latent):
             return self._reuse(state, step_index)
 
         output = compute_fn()
@@ -194,9 +205,30 @@ class ZeusThresholdTimestepCache(ZeusTimestepCache):
         for key, state in self.states.items():
             result[str(key)].update({
                 "rel_l1_path": list(state.rel_l1_path),
+                "recompute_steps": list(state.recompute_steps),
                 "threshold": self.config.threshold,
             })
         return result
+
+    def _reuse(self, state: ZeusThresholdTimestepCacheState, step_index: int) -> torch.Tensor:
+        if self.config.caching_mode != "timestep_aware_interp":
+            return super()._reuse(state, step_index)
+
+        state.cons_skip += 1
+        state.reuse_count += 1
+        state.skipping_path.append(step_index)
+
+        if len(state.prev_f) < 2 or len(state.recompute_steps) < 2:
+            return state.prev_f[-1].clone()
+
+        prev, last = state.prev_f[-2], state.prev_f[-1]
+        prev_step, last_step = state.recompute_steps[-2], state.recompute_steps[-1]
+        step_delta = last_step - prev_step
+        if step_delta <= 0:
+            return last.clone()
+
+        scale = (step_index - last_step) / step_delta
+        return last + (last - prev) * scale
 
     def _should_skip_threshold(
         self,

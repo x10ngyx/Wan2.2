@@ -21,6 +21,9 @@ from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CON
 from wan.distributed.util import init_distributed_group
 from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.utils.utils import merge_video_audio, save_video, str2bool
+from wan.block_cache import BWBlockCacheConfig
+from wan.block_group_cache import BlockGroupCacheConfig
+from wan.cfg_cache import CFGCacheConfig
 from wan.timestep_cache import (
     ZeusThresholdTimestepCacheConfig,
     ZeusTimestepCacheConfig,
@@ -248,14 +251,95 @@ def _parse_args():
         "--block_cache",
         type=str,
         default="none",
-        choices=["none"],
-        help="Reserved block cache interface. Currently only 'none' is implemented.")
+        choices=["none", "bwcache", "block-group"],
+        help="Block cache method. Use 'bwcache' for BWCache-style stack caching or 'block-group' for grouped residual block caching.")
+    parser.add_argument(
+        "--bwcache_thresh",
+        type=float,
+        default=0.15,
+        help="BWCache similarity threshold for average block relative-L1.")
+    parser.add_argument(
+        "--bwcache_reuse_interval",
+        type=int,
+        default=3,
+        help="BWCache reuse interval; official pattern is reuse_interval skips followed by one recompute.")
+    parser.add_argument(
+        "--bwcache_last_step",
+        type=float,
+        default=0.5,
+        help="BWCache tail recompute setting. Values below 1 are multiplied by the trigger step index; values >=1 are absolute tail length.")
+    parser.add_argument(
+        "--block_group_size",
+        type=int,
+        default=5,
+        help="Number of transformer blocks per block-group cache group.")
+    parser.add_argument(
+        "--block_group_threshold",
+        type=float,
+        default=0.05,
+        help="Block-group cache relative-L1 threshold.")
+    parser.add_argument(
+        "--block_group_metric",
+        type=str,
+        default="pooled_rel_l1",
+        choices=["pooled_rel_l1", "full_rel_l1"],
+        help="Block-group cache similarity metric.")
+    parser.add_argument(
+        "--block_group_start",
+        type=float,
+        default=0.0,
+        help="Block-group cache start as denoising progress fraction i/N.")
+    parser.add_argument(
+        "--block_group_end",
+        type=float,
+        default=1.0,
+        help="Block-group cache end as denoising progress fraction i/N.")
+    parser.add_argument(
+        "--block_group_max_reuse",
+        type=int,
+        default=3,
+        help="Maximum consecutive block-group cache hits per group before forcing recompute.")
+    parser.add_argument(
+        "--block_group_eps",
+        type=float,
+        default=1e-6,
+        help="Numerical epsilon for block-group cache relative-L1 denominator.")
     parser.add_argument(
         "--cfg_cache",
         type=str,
         default="none",
-        choices=["none"],
-        help="Reserved CFG cache interface. Currently only 'none' is implemented.")
+        choices=["none", "threshold"],
+        help="CFG cache method. Use 'threshold' to skip uncond branches by conditional-output relative-L1.")
+    parser.add_argument(
+        "--cfg_start",
+        type=float,
+        default=0.1,
+        help="CFG cache start as denoising progress fraction i/N.")
+    parser.add_argument(
+        "--cfg_end",
+        type=float,
+        default=0.9,
+        help="CFG cache end as denoising progress fraction i/N.")
+    parser.add_argument(
+        "--cfg_threshold",
+        type=float,
+        default=0.05,
+        help="CFG cache relative-L1 threshold between current cond and last full CFG cond.")
+    parser.add_argument(
+        "--cfg_max_reuse",
+        type=int,
+        default=3,
+        help="Maximum consecutive CFG cache hits before forcing an uncond recompute.")
+    parser.add_argument(
+        "--cfg_eps",
+        type=float,
+        default=1e-6,
+        help="Numerical epsilon for CFG cache relative-L1 denominator.")
+    parser.add_argument(
+        "--cfg_force_uncond_recompute_on_miss",
+        action="store_true",
+        default=False,
+        help="When CFG cache misses, force the uncond branch to recompute and refresh timestep/block cache state.")
     parser.add_argument(
         "--zeus_acc_start",
         type=int,
@@ -280,7 +364,7 @@ def _parse_args():
         "--zeus_caching_mode",
         type=str,
         default="reuse_interp",
-        choices=["reuse_interp", "interp_all", "reuse_all"],
+        choices=["reuse_interp", "interp_all", "reuse_all", "timestep_aware_interp"],
         help="ZEUS output reconstruction mode.")
     parser.add_argument(
         "--zeus_max_interval",
@@ -439,6 +523,9 @@ def generate(args):
         assert args.ulysses_size == world_size, f"The number of ulysses_size should be equal to the world size."
         init_distributed_group()
 
+    if args.block_cache in {"bwcache", "block-group"} and args.ulysses_size > 1:
+        raise NotImplementedError("Block cache is implemented for the native non-sequence-parallel T2V path.")
+
     if args.use_prompt_extend:
         if args.prompt_extend_method == "dashscope":
             prompt_expander = DashScopePromptExpander(
@@ -537,6 +624,43 @@ def generate(args):
             )
             logging.info(f"Enabled ZEUS threshold timestep cache: {timestep_cache_config}")
 
+        block_cache_config = None
+        if args.block_cache == "bwcache":
+            block_cache_config = BWBlockCacheConfig(
+                enabled=True,
+                thresh=args.bwcache_thresh,
+                reuse_interval=args.bwcache_reuse_interval,
+                last_step=args.bwcache_last_step,
+            )
+            logging.info(f"Enabled BWCache block cache: {block_cache_config}")
+
+        block_group_cache_config = None
+        if args.block_cache == "block-group":
+            block_group_cache_config = BlockGroupCacheConfig(
+                enabled=True,
+                group_size=args.block_group_size,
+                threshold=args.block_group_threshold,
+                metric=args.block_group_metric,
+                start=args.block_group_start,
+                end=args.block_group_end,
+                max_reuse=args.block_group_max_reuse,
+                eps=args.block_group_eps,
+            )
+            logging.info(f"Enabled block-group cache: {block_group_cache_config}")
+
+        cfg_cache_config = None
+        if args.cfg_cache == "threshold":
+            cfg_cache_config = CFGCacheConfig(
+                enabled=True,
+                start=args.cfg_start,
+                end=args.cfg_end,
+                threshold=args.cfg_threshold,
+                max_reuse=args.cfg_max_reuse,
+                eps=args.cfg_eps,
+                force_uncond_recompute_on_miss=args.cfg_force_uncond_recompute_on_miss,
+            )
+            logging.info(f"Enabled CFG cache: {cfg_cache_config}")
+
         logging.info(f"Generating video ...")
         inference_start = time.perf_counter()
         video = wan_t2v.generate(
@@ -549,7 +673,10 @@ def generate(args):
             guide_scale=args.sample_guide_scale,
             seed=args.base_seed,
             offload_model=args.offload_model,
-            timestep_cache_config=timestep_cache_config)
+            timestep_cache_config=timestep_cache_config,
+            block_cache_config=block_cache_config,
+            block_group_cache_config=block_group_cache_config,
+            cfg_cache_config=cfg_cache_config)
         inference_elapsed = time.perf_counter() - inference_start
         logging.info(f"generation_wall_elapsed_seconds={inference_elapsed:.3f}")
     elif "ti2v" in args.task:
