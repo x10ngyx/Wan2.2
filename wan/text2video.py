@@ -427,13 +427,6 @@ class WanT2V:
 
                 timestep = torch.stack(timestep)
 
-                transfer_start = time.perf_counter()
-                model = self._prepare_model_for_timestep(
-                    t, boundary, offload_model)
-                sync_cuda()
-                weight_transfer_elapsed += time.perf_counter() - transfer_start
-
-                compute_start = time.perf_counter()
                 model_stage = 'high' if t.item() >= boundary else 'low'
                 if (previous_block_cache_stage is not None and
                         previous_block_cache_stage != model_stage):
@@ -443,7 +436,16 @@ class WanT2V:
                         block_group_cache.clear_stage(previous_block_cache_stage)
                     logging.info(
                         f"Cleared block cache state for completed {previous_block_cache_stage} stage.")
+                    sync_cuda()
                 previous_block_cache_stage = model_stage
+
+                transfer_start = time.perf_counter()
+                model = self._prepare_model_for_timestep(
+                    t, boundary, offload_model)
+                sync_cuda()
+                weight_transfer_elapsed += time.perf_counter() - transfer_start
+
+                compute_start = time.perf_counter()
                 sample_guide_scale = guide_scale[1] if t.item(
                 ) >= boundary else guide_scale[0]
 

@@ -57,6 +57,7 @@ class BWBlockCache:
     def __init__(self, config: BWBlockCacheConfig):
         self.config = config
         self.states: Dict[Hashable, BWBlockCacheState] = {}
+        self.archived_summaries: Dict[str, Dict[str, object]] = {}
 
     def state(self, key: Hashable, num_steps: int, num_blocks: int, device: torch.device) -> BWBlockCacheState:
         state = self.states.setdefault(key, BWBlockCacheState())
@@ -69,6 +70,8 @@ class BWBlockCache:
     def clear_stage(self, model_stage: str):
         for key in list(self.states):
             if isinstance(key, tuple) and key and key[0] == model_stage:
+                self.archived_summaries[str(key)] = self._state_summary(
+                    self.states[key])
                 del self.states[key]
 
     def update_cal_list(
@@ -98,18 +101,21 @@ class BWBlockCache:
         return True
 
     def summary(self) -> Dict[str, Dict[str, object]]:
-        result = {}
+        result = dict(self.archived_summaries)
         for key, state in self.states.items():
-            result[str(key)] = {
-                "reuse": state.reuse_count,
-                "recompute": state.recompute_count,
-                "reuse_path": list(state.reuse_path),
-                "recompute_path": list(state.recompute_path),
-                "update_step": state.update_step,
-                "acu_l1_path": list(state.acu_l1_path),
-                "cal_list": list(state.cal_list_path),
-                "thresh": self.config.thresh,
-                "reuse_interval": self.config.reuse_interval,
-                "last_step": self.config.last_step,
-            }
+            result[str(key)] = self._state_summary(state)
         return result
+
+    def _state_summary(self, state: BWBlockCacheState) -> Dict[str, object]:
+        return {
+            "reuse": state.reuse_count,
+            "recompute": state.recompute_count,
+            "reuse_path": list(state.reuse_path),
+            "recompute_path": list(state.recompute_path),
+            "update_step": state.update_step,
+            "acu_l1_path": list(state.acu_l1_path),
+            "cal_list": list(state.cal_list_path),
+            "thresh": self.config.thresh,
+            "reuse_interval": self.config.reuse_interval,
+            "last_step": self.config.last_step,
+        }

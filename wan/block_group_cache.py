@@ -72,6 +72,7 @@ class BlockGroupCache:
     def __init__(self, config: BlockGroupCacheConfig):
         self.config = config
         self.states: Dict[Hashable, List[BlockGroupState]] = {}
+        self.archived_summaries: Dict[str, Dict[str, Dict[str, object]]] = {}
 
     def state(self, key: Hashable, num_groups: int) -> List[BlockGroupState]:
         states = self.states.get(key)
@@ -83,6 +84,8 @@ class BlockGroupCache:
     def clear_stage(self, model_stage: str):
         for key in list(self.states):
             if isinstance(key, tuple) and key and key[0] == model_stage:
+                self.archived_summaries[str(key)] = self._group_states_summary(
+                    self.states[key])
                 del self.states[key]
 
     def should_reuse(
@@ -108,21 +111,28 @@ class BlockGroupCache:
         return rel_l1 < self.config.threshold
 
     def summary(self) -> Dict[str, Dict[str, object]]:
-        result = {}
+        result = dict(self.archived_summaries)
         for key, group_states in self.states.items():
-            result[str(key)] = {}
-            for group_index, state in enumerate(group_states):
-                result[str(key)][str(group_index)] = {
-                    "reuse": state.reuse_count,
-                    "recompute": state.recompute_count,
-                    "reuse_path": list(state.reuse_path),
-                    "recompute_path": list(state.recompute_path),
-                    "metric_path": list(state.metric_path),
-                    "threshold": self.config.threshold,
-                    "max_reuse": self.config.max_reuse,
-                    "group_size": self.config.group_size,
-                    "metric": self.config.metric,
-                }
+            result[str(key)] = self._group_states_summary(group_states)
+        return result
+
+    def _group_states_summary(
+        self,
+        group_states: List[BlockGroupState],
+    ) -> Dict[str, Dict[str, object]]:
+        result = {}
+        for group_index, state in enumerate(group_states):
+            result[str(group_index)] = {
+                "reuse": state.reuse_count,
+                "recompute": state.recompute_count,
+                "reuse_path": list(state.reuse_path),
+                "recompute_path": list(state.recompute_path),
+                "metric_path": list(state.metric_path),
+                "threshold": self.config.threshold,
+                "max_reuse": self.config.max_reuse,
+                "group_size": self.config.group_size,
+                "metric": self.config.metric,
+            }
         return result
 
     def _relative_l1(self, current: torch.Tensor, previous: torch.Tensor) -> float:
