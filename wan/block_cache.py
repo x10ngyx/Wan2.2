@@ -95,7 +95,9 @@ class BWBlockCache:
                                       (self.config.reuse_interval + 1)]
 
         tail_start = step_index * self.config.last_step if self.config.last_step < 1 else self.config.last_step
-        new_cal_list[-int(tail_start):] = 1
+        tail_len = int(tail_start)
+        if tail_len > 0:
+            new_cal_list[-tail_len:] = 1
 
         state.cal_list.copy_(new_cal_list)
         state.cal_list_updated = True

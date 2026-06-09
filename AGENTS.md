@@ -41,6 +41,7 @@ export HF_HUB_CACHE=/hy-tmp/hf-cache/hub
 
 每组实验必须完整归档，至少包括：
 
+- 同一组实验如果包含多个 prompt、cache 方法或 threshold 候选，应优先使用单进程 batch runner：每个进程只加载一次 WanT2V pipeline/checkpoint shards，然后在同一进程内顺序运行候选，避免每个候选重复 loading shards。只有为了隔离崩溃、排查显存泄漏或验证冷启动行为时，才使用逐候选独立进程；这种例外必须在实验记录中说明原因。
 - 生成视频文件，且用 `ffprobe` 验证分辨率、帧数、fps、duration。
 - 启动命令脚本或命令记录，必须包含完整参数、prompt、seed、GPU/FSDP/xDiT 参数、cache 参数和输出路径。
 - 原始运行日志，保留模型加载、采样、保存、cache 命中/失效日志。

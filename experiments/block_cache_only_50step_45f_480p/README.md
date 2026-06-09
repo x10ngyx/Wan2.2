@@ -19,6 +19,8 @@ This experiment runs a one-prompt block-cache-only comparison for Wan2.2 T2V-A14
 - block-group thresholds: `0.01 0.03 0.05`
 - block-group size: `5`
 - block-group metric: `pooled_rel_l1`
+- block-group protected window: `0.1` to `0.9` denoising progress
+- block-group max consecutive reuse: `3`
 
 ## Run
 
@@ -33,6 +35,9 @@ EXP_ROOT=/hy-tmp/wan22_block_cache_only_custom \
 BWCACHE_THRESHOLDS="0.05 0.15 0.30" \
 BWCACHE_METRIC=pooled_rel_l1 \
 BLOCK_GROUP_THRESHOLDS="0.01 0.03 0.05" \
+BLOCK_GROUP_START=0.1 \
+BLOCK_GROUP_END=0.9 \
+BLOCK_GROUP_MAX_REUSE=3 \
 PROMPT_OFFSET=0 \
 bash experiments/block_cache_only_50step_45f_480p/run_experiments.sh
 ```
