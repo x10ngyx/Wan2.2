@@ -133,6 +133,9 @@
 
 - 2026-06-09 block-cache-only OOM diagnosis/fix: the launched run failed on `bwcache_th_0p05` at sampling step 32 with CUDA OOM. Root cause was block-cache state from the completed high-noise stage remaining on GPU after the schedule switched to the low-noise model; those high-stage states are never used again in the monotonic denoising schedule. Added safe `clear_stage(stage)` methods to BWCache and block-group cache and wired `WanT2V.generate()` to clear completed block-cache stage state on high/low stage switch. Validation passed with conda `py_compile` and a CPU `clear_stage` state check.
 
+
+- 2026-06-09 block-cache-only retry launched after OOM fix: archived the failed `bwcache_th_0p05` attempt under `/hy-tmp/wan22_block_cache_only_50step_45f_480p_20260609_125436/failed_history/`, removed the active failed marker/time/log for resume, and restarted the experiment in tmux session `block_cache_only_p01_retry_1318` with the same result root and `RESUME_EXISTING=True`. Initial pane confirmed baseline was skipped again and `bwcache_th_0p05` restarted using the stage-clear fix commit `689f67b`.
+
 ## Notes
 
 - Follow `AGENTS.md` workflow: read this file at session start, update it before session end, and keep concise session logs under `logs/`.
