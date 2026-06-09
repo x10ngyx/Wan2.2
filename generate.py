@@ -275,6 +275,16 @@ def _parse_args():
         choices=["pooled_rel_l1", "full_rel_l1"],
         help="BWCache similarity metric. pooled_rel_l1 stores pooled block features to reduce memory.")
     parser.add_argument(
+        "--bwcache_start",
+        type=float,
+        default=0.0,
+        help="BWCache start as denoising progress fraction i/N.")
+    parser.add_argument(
+        "--bwcache_end",
+        type=float,
+        default=1.0,
+        help="BWCache end as denoising progress fraction i/N.")
+    parser.add_argument(
         "--block_group_size",
         type=int,
         default=5,
@@ -638,6 +648,8 @@ def generate(args):
                 reuse_interval=args.bwcache_reuse_interval,
                 last_step=args.bwcache_last_step,
                 metric=args.bwcache_metric,
+                start=args.bwcache_start,
+                end=args.bwcache_end,
             )
             logging.info(f"Enabled BWCache block cache: {block_cache_config}")
 
