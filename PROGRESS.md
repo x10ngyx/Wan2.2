@@ -127,6 +127,9 @@
 - The block-cache-only runner archives baseline and candidate videos, full command records, raw logs, compute-only timing files, ffprobe JSON, FFmpeg PSNR JSON/logs vs baseline, threshold env files, failure records, summary CSV, aggregate-by-method-threshold CSV/JSON, and a workspace symlink under `experiment_results/`. The summarizer parses both `BWCache block cache summary` and nested `Block-group cache summary` formats.
 - Validation for block-cache-only experiment scripts: `bash -n` passed for `run_experiments.sh`; conda `py_compile` passed for `summarize_results.py` and reused PSNR/prompt helpers; prompt parser returned prompt 01. No full GPU experiment was launched in this session.
 
+
+- 2026-06-09 block-cache-only prompt 01 experiment launched: committed current implementation/scripts at git commit `42ee328` (`Add CFG and block cache experiment support`), then prepared result root `/hy-tmp/wan22_block_cache_only_50step_45f_480p_20260609_125436` by copying prompt 01 baseline video, command, raw log, compute time, and ffprobe JSON from `/hy-tmp/wan22_zeus_threshold_reuse_interp_10prompt_5th_20260608_195427`. Started tmux session `block_cache_only_p01_125436` with `RESUME_EXISTING=True`; pane confirmed the baseline was skipped and the first candidate `bwcache_th_0p05` started. Settings are block cache only, timestep/cfg cache disabled, BWCache thresholds `0.05 0.15 0.30`, block-group thresholds `0.01 0.03 0.05`, group size 5, pooled relative-L1, prompt 01, seed 42, 832x480, 45 frames, 50 dpm++ steps.
+
 ## Notes
 
 - Follow `AGENTS.md` workflow: read this file at session start, update it before session end, and keep concise session logs under `logs/`.
