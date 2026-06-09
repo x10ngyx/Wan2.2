@@ -130,6 +130,9 @@
 
 - 2026-06-09 block-cache-only prompt 01 experiment launched: committed current implementation/scripts at git commit `42ee328` (`Add CFG and block cache experiment support`), then prepared result root `/hy-tmp/wan22_block_cache_only_50step_45f_480p_20260609_125436` by copying prompt 01 baseline video, command, raw log, compute time, and ffprobe JSON from `/hy-tmp/wan22_zeus_threshold_reuse_interp_10prompt_5th_20260608_195427`. Started tmux session `block_cache_only_p01_125436` with `RESUME_EXISTING=True`; pane confirmed the baseline was skipped and the first candidate `bwcache_th_0p05` started. Settings are block cache only, timestep/cfg cache disabled, BWCache thresholds `0.05 0.15 0.30`, block-group thresholds `0.01 0.03 0.05`, group size 5, pooled relative-L1, prompt 01, seed 42, 832x480, 45 frames, 50 dpm++ steps.
 
+
+- 2026-06-09 block-cache-only OOM diagnosis/fix: the launched run failed on `bwcache_th_0p05` at sampling step 32 with CUDA OOM. Root cause was block-cache state from the completed high-noise stage remaining on GPU after the schedule switched to the low-noise model; those high-stage states are never used again in the monotonic denoising schedule. Added safe `clear_stage(stage)` methods to BWCache and block-group cache and wired `WanT2V.generate()` to clear completed block-cache stage state on high/low stage switch. Validation passed with conda `py_compile` and a CPU `clear_stage` state check.
+
 ## Notes
 
 - Follow `AGENTS.md` workflow: read this file at session start, update it before session end, and keep concise session logs under `logs/`.

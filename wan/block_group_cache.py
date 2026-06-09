@@ -80,6 +80,11 @@ class BlockGroupCache:
             self.states[key] = states
         return states
 
+    def clear_stage(self, model_stage: str):
+        for key in list(self.states):
+            if isinstance(key, tuple) and key and key[0] == model_stage:
+                del self.states[key]
+
     def should_reuse(
         self,
         group_state: BlockGroupState,

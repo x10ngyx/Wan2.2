@@ -66,6 +66,11 @@ class BWBlockCache:
     def if_reuse_cache(self, acu_l1: float, depth: int) -> bool:
         return acu_l1 / depth < self.config.thresh
 
+    def clear_stage(self, model_stage: str):
+        for key in list(self.states):
+            if isinstance(key, tuple) and key and key[0] == model_stage:
+                del self.states[key]
+
     def update_cal_list(
         self,
         state: BWBlockCacheState,

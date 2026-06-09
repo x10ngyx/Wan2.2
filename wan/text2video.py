@@ -420,6 +420,7 @@ class WanT2V:
                     block_group_cache_force_recompute=force_recompute,
                     **kwargs)[0]
 
+            previous_block_cache_stage = None
             for step_index, t in enumerate(tqdm(timesteps)):
                 latent_model_input = latents
                 timestep = [t]
@@ -434,6 +435,15 @@ class WanT2V:
 
                 compute_start = time.perf_counter()
                 model_stage = 'high' if t.item() >= boundary else 'low'
+                if (previous_block_cache_stage is not None and
+                        previous_block_cache_stage != model_stage):
+                    if block_cache is not None:
+                        block_cache.clear_stage(previous_block_cache_stage)
+                    if block_group_cache is not None:
+                        block_group_cache.clear_stage(previous_block_cache_stage)
+                    logging.info(
+                        f"Cleared block cache state for completed {previous_block_cache_stage} stage.")
+                previous_block_cache_stage = model_stage
                 sample_guide_scale = guide_scale[1] if t.item(
                 ) >= boundary else guide_scale[0]
 
