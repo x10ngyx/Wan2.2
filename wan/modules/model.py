@@ -477,6 +477,12 @@ class WanModel(ModelMixin, ConfigMixin):
         block_group_cache_step_index=None,
         block_group_cache_num_steps=None,
         block_group_cache_force_recompute=False,
+        timestep_cache=None,
+        timestep_cache_key=None,
+        timestep_cache_step_index=None,
+        timestep_cache_num_steps=None,
+        timestep_cache_scheduler_sigmas=None,
+        timestep_cache_force_recompute=False,
     ):
         r"""
         Forward pass through the diffusion model
@@ -549,7 +555,113 @@ class WanModel(ModelMixin, ConfigMixin):
             context=context,
             context_lens=context_lens)
 
-        if block_group_cache is not None:
+        if timestep_cache is not None:
+            if (timestep_cache_key is None or
+                    timestep_cache_step_index is None or
+                    timestep_cache_num_steps is None):
+                raise ValueError("SeaCache requires key, step_index, and num_steps.")
+            with torch.amp.autocast('cuda', dtype=torch.float32):
+                e_first = (
+                    self.blocks[0].modulation.unsqueeze(0) + e0).chunk(6, dim=2)
+            feature = self.blocks[0]._modulated_norm1(x, e_first)
+            should_reuse, cached_residual = timestep_cache.should_reuse_blocks(
+                timestep_cache_key,
+                timestep_cache_step_index,
+                timestep_cache_num_steps,
+                feature,
+                grid_sizes[0],
+                scheduler_sigmas=timestep_cache_scheduler_sigmas,
+                force_recompute=timestep_cache_force_recompute,
+            )
+            if should_reuse:
+                x = x + cached_residual
+            else:
+                origin_x = x.detach().clone()
+                if block_group_cache is not None:
+                    if (block_group_cache_key is None or
+                            block_group_cache_step_index is None or
+                            block_group_cache_num_steps is None):
+                        raise ValueError("Block-group cache requires key, step_index, and num_steps.")
+                    group_size = block_group_cache.config.group_size
+                    num_groups = math.ceil(len(self.blocks) / group_size)
+                    group_states = block_group_cache.state(
+                        block_group_cache_key,
+                        num_groups,
+                    )
+                    for group_index, group_start in enumerate(
+                            range(0, len(self.blocks), group_size)):
+                        group_end = min(group_start + group_size, len(self.blocks))
+                        group_state = group_states[group_index]
+                        group_feature = self.blocks[group_start].block_group_cache_feature(
+                            x,
+                            e0,
+                            block_group_cache.config.metric,
+                        )
+                        if (not block_group_cache_force_recompute and
+                                block_group_cache.should_reuse(
+                                    group_state,
+                                    block_group_cache_step_index,
+                                    block_group_cache_num_steps,
+                                    group_feature)):
+                            x = x + group_state.cached_residual
+                            group_state.record_reuse(block_group_cache_step_index)
+                            continue
+
+                        group_input = x.detach().clone()
+                        for block in self.blocks[group_start:group_end]:
+                            x = block(x, **kwargs)
+                        group_state.record_recompute(
+                            block_group_cache_step_index,
+                            group_feature,
+                            x - group_input,
+                        )
+                elif block_cache is None:
+                    for block in self.blocks:
+                        x = block(x, **kwargs)
+                else:
+                    if block_cache_key is None or block_cache_step_index is None or block_cache_num_steps is None:
+                        raise ValueError("BWCache requires key, step_index, and num_steps.")
+                    bw_state = block_cache.state(
+                        block_cache_key,
+                        block_cache_num_steps,
+                        len(self.blocks),
+                        x.device,
+                    )
+                    cal_value = int(bw_state.cal_list[block_cache_step_index].item())
+                    if (not block_cache_force_recompute and cal_value == 0 and
+                            bw_state.previous_residual is not None):
+                        x = x + bw_state.previous_residual
+                        bw_state.reuse_count += 1
+                        bw_state.reuse_path.append(block_cache_step_index)
+                    else:
+                        block_origin_x = x.detach().clone()
+                        acu_l1 = 0.0
+                        for block_index, block in enumerate(self.blocks):
+                            x, l1 = block(
+                                x,
+                                **kwargs,
+                                bwcache_state=bw_state,
+                                bwcache_block_index=block_index,
+                                bwcache_cal_list_updated=bw_state.cal_list_updated,
+                                bwcache_is_first_step=block_cache_step_index == 0,
+                                bwcache_metric=block_cache.config.metric,
+                            )
+                            acu_l1 += l1
+                        bw_state.previous_residual = (x - block_origin_x).detach().clone()
+                        bw_state.recompute_count += 1
+                        bw_state.recompute_path.append(block_cache_step_index)
+                        bw_state.acu_l1_path.append((block_cache_step_index, acu_l1))
+                        block_cache.update_cal_list(
+                            bw_state,
+                            block_cache_step_index,
+                            block_cache_num_steps,
+                        )
+                timestep_cache.record_recompute_blocks(
+                    timestep_cache_key,
+                    timestep_cache_step_index,
+                    x - origin_x,
+                )
+        elif block_group_cache is not None:
             if (block_group_cache_key is None or
                     block_group_cache_step_index is None or
                     block_group_cache_num_steps is None):
@@ -638,6 +750,18 @@ class WanModel(ModelMixin, ConfigMixin):
 
     def cfg_cache_feature(self, x, t, seq_len, metric="pooled_rel_l1"):
         """Return timestep-modulated input features for CFG cache decisions."""
+        x, e0, _ = self._timestep_modulated_input_base(x, t, seq_len)
+        return self.blocks[0].block_group_cache_feature(x, e0, metric).detach()
+
+    def seacache_feature(self, x, t, seq_len):
+        """Return full timestep-modulated input features for SeaCache decisions."""
+        x, e0, grid_sizes = self._timestep_modulated_input_base(x, t, seq_len)
+        with torch.amp.autocast('cuda', dtype=torch.float32):
+            e = (self.blocks[0].modulation.unsqueeze(0) + e0).chunk(6, dim=2)
+        feature = self.blocks[0]._modulated_norm1(x, e)
+        return feature.detach(), grid_sizes[0].detach()
+
+    def _timestep_modulated_input_base(self, x, t, seq_len):
         device = self.patch_embedding.weight.device
         if self.freqs.device != device:
             self.freqs = self.freqs.to(device)
@@ -662,8 +786,7 @@ class WanModel(ModelMixin, ConfigMixin):
                 sinusoidal_embedding_1d(self.freq_dim,
                                         t).unflatten(0, (bt, seq_len)).float())
             e0 = self.time_projection(e).unflatten(2, (6, self.dim))
-
-        return self.blocks[0].block_group_cache_feature(x, e0, metric).detach()
+        return x, e0, grid_sizes
 
     def unpatchify(self, x, grid_sizes):
         r"""

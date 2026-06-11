@@ -24,6 +24,8 @@ from .distributed.util import get_world_size
 from .modules.model import WanModel
 from .modules.t5 import T5EncoderModel
 from .timestep_cache import (
+    SeaCacheTimestepCache,
+    SeaCacheTimestepCacheConfig,
     ZeusThresholdTimestepCache,
     ZeusThresholdTimestepCacheConfig,
     ZeusTimestepCache,
@@ -375,8 +377,12 @@ class WanT2V:
             timestep_cache = None
             timestep_cache_is_threshold = isinstance(
                 timestep_cache_config, ZeusThresholdTimestepCacheConfig)
+            timestep_cache_is_seacache = isinstance(
+                timestep_cache_config, SeaCacheTimestepCacheConfig)
             if timestep_cache_config is not None and timestep_cache_config.enabled:
-                if timestep_cache_is_threshold:
+                if timestep_cache_is_seacache:
+                    timestep_cache = SeaCacheTimestepCache(timestep_cache_config)
+                elif timestep_cache_is_threshold:
                     timestep_cache = ZeusThresholdTimestepCache(timestep_cache_config)
                 else:
                     timestep_cache = ZeusTimestepCache(timestep_cache_config)
@@ -418,6 +424,12 @@ class WanT2V:
                     block_group_cache_step_index=step_index,
                     block_group_cache_num_steps=len(timesteps),
                     block_group_cache_force_recompute=force_recompute,
+                    timestep_cache=timestep_cache if timestep_cache_is_seacache else None,
+                    timestep_cache_key=(model_stage, branch),
+                    timestep_cache_step_index=step_index,
+                    timestep_cache_num_steps=len(timesteps),
+                    timestep_cache_scheduler_sigmas=getattr(sample_scheduler, "sigmas", None),
+                    timestep_cache_force_recompute=force_recompute,
                     **kwargs)[0]
 
             previous_block_cache_stage = None
@@ -451,7 +463,7 @@ class WanT2V:
 
                 def branch_forward(branch, kwargs, force_recompute=False):
                     cache_key = (model_stage, branch)
-                    if timestep_cache is None:
+                    if timestep_cache is None or timestep_cache_is_seacache:
                         return model_forward(
                             model,
                             latent_model_input,
@@ -572,7 +584,7 @@ class WanT2V:
                 compute_elapsed += time.perf_counter() - compute_start
 
             if timestep_cache is not None and self.rank == 0:
-                logging.info(f"ZEUS timestep cache summary: {timestep_cache.summary()}")
+                logging.info(f"Timestep cache summary: {timestep_cache.summary()}")
             if block_cache is not None and self.rank == 0:
                 logging.info(f"BWCache block cache summary: {block_cache.summary()}")
             if block_group_cache is not None and self.rank == 0:

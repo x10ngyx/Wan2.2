@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Hashable, List, Optional, Tuple
 
@@ -256,3 +257,234 @@ class ZeusThresholdTimestepCache(ZeusTimestepCache):
         diff = (current - previous).abs().mean()
         denom = previous.abs().mean().clamp_min(self.config.eps)
         return (diff / denom).detach().float().item()
+
+
+@dataclass
+class SeaCacheTimestepCacheConfig:
+    enabled: bool = False
+    threshold: float = 0.2
+    num_steps: Optional[int] = None
+    use_ret_steps: bool = False
+    power_exp: float = 3.0
+    power_const: float = 1.0
+    eps: float = 1e-16
+    norm_mode: str = "mean"
+
+    def __post_init__(self):
+        if self.threshold < 0:
+            raise ValueError("SeaCache threshold must be non-negative.")
+        if self.num_steps is not None and self.num_steps <= 0:
+            raise ValueError("SeaCache num_steps must be positive when set.")
+        if self.power_exp <= 0:
+            raise ValueError("SeaCache power_exp must be positive.")
+        if self.power_const <= 0:
+            raise ValueError("SeaCache power_const must be positive.")
+        if self.eps <= 0:
+            raise ValueError("SeaCache eps must be positive.")
+        if self.norm_mode not in {"mean", "peak"}:
+            raise ValueError("SeaCache norm_mode must be mean or peak.")
+
+
+@dataclass
+class SeaCacheTimestepCacheState:
+    previous_feature: Optional[torch.Tensor] = None
+    previous_residual: Optional[torch.Tensor] = None
+    accumulated_rel_l1_distance: float = 0.0
+    reuse_count: int = 0
+    recompute_count: int = 0
+    skipping_path: List[int] = field(default_factory=list)
+    recompute_path: List[int] = field(default_factory=list)
+    rel_l1_path: List[Tuple[int, float]] = field(default_factory=list)
+    accumulated_rel_l1_path: List[Tuple[int, float]] = field(default_factory=list)
+
+
+class SeaCacheTimestepCache:
+    """SeaCache block-residual timestep cache with independent caller keys.
+
+    SeaCache reuses the previous transformer-block residual, not the final
+    denoiser output. The caller still runs the model head and unpatchify after a
+    cache hit, matching the original Wan2.1 SeaCache implementation.
+    """
+
+    def __init__(self, config: SeaCacheTimestepCacheConfig):
+        self.config = config
+        self.states: Dict[Hashable, SeaCacheTimestepCacheState] = {}
+
+    def should_reuse_blocks(
+        self,
+        key: Hashable,
+        step_index: int,
+        num_steps: int,
+        feature: torch.Tensor,
+        grid_size: torch.Tensor,
+        scheduler_sigmas: Optional[torch.Tensor] = None,
+        force_recompute: bool = False,
+    ) -> Tuple[bool, Optional[torch.Tensor]]:
+        state = self.states.setdefault(key, SeaCacheTimestepCacheState())
+        filtered_feature = self._filter_feature(
+            feature,
+            grid_size,
+            step_index,
+            num_steps,
+            scheduler_sigmas,
+        )
+        should_recompute = force_recompute or self._should_recompute(
+            state,
+            step_index,
+            num_steps,
+            filtered_feature,
+        )
+        state.previous_feature = filtered_feature.detach().clone()
+        if should_recompute:
+            return False, None
+
+        state.reuse_count += 1
+        state.skipping_path.append(step_index)
+        return True, state.previous_residual.clone()
+
+    def record_recompute_blocks(
+        self,
+        key: Hashable,
+        step_index: int,
+        residual: torch.Tensor,
+    ) -> None:
+        state = self.states.setdefault(key, SeaCacheTimestepCacheState())
+        self._record_recompute(state, step_index, residual)
+
+    def summary(self) -> Dict[str, Dict[str, object]]:
+        result = {}
+        for key, state in self.states.items():
+            result[str(key)] = {
+                "reuse": state.reuse_count,
+                "recompute": state.recompute_count,
+                "skipping_path": list(state.skipping_path),
+                "recompute_path": list(state.recompute_path),
+                "rel_l1_path": list(state.rel_l1_path),
+                "accumulated_rel_l1_path": list(state.accumulated_rel_l1_path),
+                "threshold": self.config.threshold,
+            }
+        return result
+
+    def _should_recompute(
+        self,
+        state: SeaCacheTimestepCacheState,
+        step_index: int,
+        num_steps: int,
+        filtered_feature: torch.Tensor,
+    ) -> bool:
+        ret_steps, cutoff_steps = self._ret_cutoff_steps(num_steps)
+        if (step_index < ret_steps or step_index >= cutoff_steps or
+                state.previous_feature is None or state.previous_residual is None):
+            state.accumulated_rel_l1_distance = 0.0
+            return True
+
+        rel_l1 = self._relative_l1(filtered_feature, state.previous_feature)
+        state.accumulated_rel_l1_distance += rel_l1
+        state.rel_l1_path.append((step_index, rel_l1))
+        state.accumulated_rel_l1_path.append(
+            (step_index, state.accumulated_rel_l1_distance))
+        if state.accumulated_rel_l1_distance < self.config.threshold:
+            return False
+
+        state.accumulated_rel_l1_distance = 0.0
+        return True
+
+    def _record_recompute(
+        self,
+        state: SeaCacheTimestepCacheState,
+        step_index: int,
+        output: torch.Tensor,
+    ) -> torch.Tensor:
+        state.previous_residual = output.detach().clone()
+        state.recompute_count += 1
+        state.recompute_path.append(step_index)
+        return output
+
+    def _ret_cutoff_steps(self, num_steps: int) -> Tuple[int, int]:
+        configured_steps = self.config.num_steps or num_steps
+        if self.config.use_ret_steps:
+            return min(5, configured_steps), configured_steps
+        return min(1, configured_steps), max(0, configured_steps - 1)
+
+    def _filter_feature(
+        self,
+        feature: torch.Tensor,
+        grid_size: torch.Tensor,
+        step_index: int,
+        num_steps: int,
+        scheduler_sigmas: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        feature_5d = self._reshape_to_grid(feature, grid_size)
+        a, b = self._ab_from_flow_scheduler(step_index, num_steps, scheduler_sigmas)
+        filtered = self._apply_sea_from_ab(
+            feature_5d,
+            a,
+            b,
+            dims=(-2, -3, -4),
+        )
+        return filtered.reshape(filtered.shape[0], -1, filtered.shape[-1]).detach()
+
+    def _reshape_to_grid(self, feature: torch.Tensor, grid_size: torch.Tensor) -> torch.Tensor:
+        f, h, w = [int(v) for v in grid_size.detach().cpu().tolist()]
+        return feature.reshape(feature.shape[0], f, h, w, feature.shape[-1])
+
+    def _ab_from_flow_scheduler(
+        self,
+        step_index: int,
+        num_steps: int,
+        scheduler_sigmas: Optional[torch.Tensor],
+    ) -> Tuple[float, float]:
+        if scheduler_sigmas is not None:
+            sigma = float(scheduler_sigmas[step_index].detach().cpu().item())
+        else:
+            sigma = 1.0 - (step_index + 1) / float(num_steps)
+        sigma = max(1e-6, min(1.0 - 1e-6, sigma))
+        return 1.0 - sigma, sigma
+
+    def _apply_sea_from_ab(
+        self,
+        x: torch.Tensor,
+        a: float,
+        b: float,
+        dims: Tuple[int, ...],
+    ) -> torch.Tensor:
+        orig_dtype = x.dtype
+        x32 = x.contiguous().to(torch.float32)
+        spectrum = torch.fft.fftn(x32, dim=dims)
+        gain = None
+        for axis in dims:
+            axis_len = x32.shape[axis]
+            freq = torch.fft.fftfreq(
+                axis_len,
+                device=x32.device,
+                dtype=torch.float32,
+            )
+            rad = torch.abs(freq)
+            signal_power = self.config.power_const / (
+                (rad ** self.config.power_exp) + self.config.eps)
+            axis_gain = (a * signal_power) / (
+                (a * a * signal_power) + (b * b) + self.config.eps)
+            axis_shape = [1] * x32.ndim
+            axis_shape[axis] = axis_gain.shape[0]
+            axis_gain = axis_gain.reshape(axis_shape)
+            gain = axis_gain if gain is None else gain * axis_gain
+
+        if self.config.norm_mode == "peak":
+            maxv = torch.amax(gain)
+            if torch.isfinite(maxv) and maxv > 0:
+                gain = gain / maxv
+        else:
+            meanv = torch.mean(gain)
+            if torch.isfinite(meanv) and meanv > 0:
+                gain = gain / meanv
+
+        filtered = torch.fft.ifftn(spectrum * gain, dim=dims).real
+        return filtered.to(orig_dtype)
+
+    def _relative_l1(self, current: torch.Tensor, previous: torch.Tensor) -> float:
+        diff = (current.float() - previous.float()).abs().mean()
+        denom = previous.float().abs().mean().clamp_min(self.config.eps)
+        value = diff / denom
+        if not torch.isfinite(value):
+            return math.inf
+        return value.detach().float().item()

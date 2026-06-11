@@ -25,6 +25,7 @@ from wan.block_cache import BWBlockCacheConfig
 from wan.block_group_cache import BlockGroupCacheConfig
 from wan.cfg_cache import CFGCacheConfig
 from wan.timestep_cache import (
+    SeaCacheTimestepCacheConfig,
     ZeusThresholdTimestepCacheConfig,
     ZeusTimestepCacheConfig,
 )
@@ -245,8 +246,8 @@ def _parse_args():
         "--timestep_cache",
         type=str,
         default="none",
-        choices=["none", "zeus", "zeus-threshold"],
-        help="Timestep cache method. Use 'zeus' for fixed ZEUS skipping or 'zeus-threshold' for latent-threshold ZEUS skipping.")
+        choices=["none", "zeus", "zeus-threshold", "seacache"],
+        help="Timestep cache method. Use 'zeus', 'zeus-threshold', or 'seacache'.")
     parser.add_argument(
         "--block_cache",
         type=str,
@@ -428,6 +429,42 @@ def _parse_args():
         type=float,
         default=1e-6,
         help="Numerical epsilon for zeus-threshold relative-L1 metric.")
+    parser.add_argument(
+        "--seacache_threshold",
+        type=float,
+        default=0.2,
+        help="SeaCache accumulated filtered-feature relative-L1 threshold.")
+    parser.add_argument(
+        "--seacache_num_steps",
+        type=int,
+        default=None,
+        help="Optional SeaCache inference step count override for ret/cutoff scheduling.")
+    parser.add_argument(
+        "--seacache_use_ret_steps",
+        action="store_true",
+        default=False,
+        help="Use SeaCache ret_steps=5 and no tail cutoff. Default keeps first and last denoising steps as cold recompute.")
+    parser.add_argument(
+        "--seacache_power_exp",
+        type=float,
+        default=3.0,
+        help="SeaCache spectral prior exponent used by the scheduler-aligned SEA filter.")
+    parser.add_argument(
+        "--seacache_power_const",
+        type=float,
+        default=1.0,
+        help="SeaCache spectral prior constant used by the scheduler-aligned SEA filter.")
+    parser.add_argument(
+        "--seacache_eps",
+        type=float,
+        default=1e-16,
+        help="Numerical epsilon for SeaCache filtering and relative-L1.")
+    parser.add_argument(
+        "--seacache_norm_mode",
+        type=str,
+        default="mean",
+        choices=["mean", "peak"],
+        help="SeaCache spectral filter normalization mode.")
 
     # animate
     parser.add_argument(
@@ -649,6 +686,18 @@ def generate(args):
                 eps=args.zeus_threshold_eps,
             )
             logging.info(f"Enabled ZEUS threshold timestep cache: {timestep_cache_config}")
+        elif args.timestep_cache == "seacache":
+            timestep_cache_config = SeaCacheTimestepCacheConfig(
+                enabled=True,
+                threshold=args.seacache_threshold,
+                num_steps=args.seacache_num_steps,
+                use_ret_steps=args.seacache_use_ret_steps,
+                power_exp=args.seacache_power_exp,
+                power_const=args.seacache_power_const,
+                eps=args.seacache_eps,
+                norm_mode=args.seacache_norm_mode,
+            )
+            logging.info(f"Enabled SeaCache timestep cache: {timestep_cache_config}")
 
         block_cache_config = None
         if args.block_cache == "bwcache":
