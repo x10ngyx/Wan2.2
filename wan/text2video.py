@@ -487,36 +487,79 @@ class WanT2V:
                             force_recompute=force_recompute),
                         force_recompute=force_recompute)
 
-                noise_pred_cond = branch_forward('cond', arg_c)
                 cfg_key = model_stage
-                if cfg_cache is not None and cfg_cache.should_reuse(
-                        cfg_key,
-                        step_index,
-                        len(timesteps),
-                        noise_pred_cond):
-                    noise_pred = cfg_cache.reuse(
-                        cfg_key,
-                        step_index,
-                        noise_pred_cond,
-                        sample_guide_scale)
+                cfg_metric_feature = None
+                if (cfg_cache is not None and
+                        cfg_cache.config.metric != "cond_output_rel_l1"):
+                    cfg_metric_feature = model.cfg_cache_feature(
+                        latent_model_input,
+                        timestep,
+                        seq_len,
+                        metric="pooled_rel_l1")
+
+                if cfg_cache is None:
+                    noise_pred_cond = branch_forward('cond', arg_c)
+                    noise_pred_uncond = branch_forward('uncond', arg_null)
+                    noise_pred = noise_pred_uncond + sample_guide_scale * (
+                        noise_pred_cond - noise_pred_uncond)
+                elif cfg_cache.config.metric != "cond_output_rel_l1":
+                    if cfg_cache.should_reuse(
+                            cfg_key,
+                            step_index,
+                            len(timesteps),
+                            metric_feature=cfg_metric_feature):
+                        noise_pred_cond = branch_forward('cond', arg_c)
+                        noise_pred = cfg_cache.reuse(
+                            cfg_key,
+                            step_index,
+                            noise_pred_cond,
+                            sample_guide_scale)
+                    else:
+                        force_full_cfg_recompute = cfg_cache.config.force_uncond_recompute_on_miss
+                        noise_pred_cond = branch_forward(
+                            'cond',
+                            arg_c,
+                            force_recompute=force_full_cfg_recompute)
+                        noise_pred_uncond = branch_forward(
+                            'uncond',
+                            arg_null,
+                            force_recompute=force_full_cfg_recompute)
+                        noise_pred = cfg_cache.recompute(
+                            cfg_key,
+                            step_index,
+                            noise_pred_cond,
+                            noise_pred_uncond,
+                            sample_guide_scale,
+                            metric_feature=cfg_metric_feature)
                 else:
-                    force_uncond_recompute = (
-                        cfg_cache is not None and
-                        cfg_cache.config.force_uncond_recompute_on_miss)
-                    noise_pred_uncond = branch_forward(
-                        'uncond',
-                        arg_null,
-                        force_recompute=force_uncond_recompute)
-                    if cfg_cache is not None:
+                    noise_pred_cond = branch_forward('cond', arg_c)
+                    if cfg_cache.should_reuse(
+                            cfg_key,
+                            step_index,
+                            len(timesteps),
+                            noise_pred_cond):
+                        noise_pred = cfg_cache.reuse(
+                            cfg_key,
+                            step_index,
+                            noise_pred_cond,
+                            sample_guide_scale)
+                    else:
+                        force_full_cfg_recompute = cfg_cache.config.force_uncond_recompute_on_miss
+                        if force_full_cfg_recompute:
+                            noise_pred_cond = branch_forward(
+                                'cond',
+                                arg_c,
+                                force_recompute=True)
+                        noise_pred_uncond = branch_forward(
+                            'uncond',
+                            arg_null,
+                            force_recompute=force_full_cfg_recompute)
                         noise_pred = cfg_cache.recompute(
                             cfg_key,
                             step_index,
                             noise_pred_cond,
                             noise_pred_uncond,
                             sample_guide_scale)
-                    else:
-                        noise_pred = noise_pred_uncond + sample_guide_scale * (
-                            noise_pred_cond - noise_pred_uncond)
 
                 temp_x0 = sample_scheduler.step(
                     noise_pred.unsqueeze(0),

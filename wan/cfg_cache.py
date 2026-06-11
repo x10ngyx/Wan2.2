@@ -12,6 +12,7 @@ class CFGCacheConfig:
     threshold: float = 0.05
     max_reuse: int = 3
     eps: float = 1e-6
+    metric: str = "timestep_modulated_input_rel_l1"
     force_uncond_recompute_on_miss: bool = False
 
     def __post_init__(self):
@@ -27,12 +28,21 @@ class CFGCacheConfig:
             raise ValueError("CFG cache max_reuse must be positive.")
         if self.eps <= 0:
             raise ValueError("CFG cache eps must be positive.")
+        if self.metric not in {
+                "cond_output_rel_l1",
+                "timestep_modulated_input_rel_l1",
+                "timestep_modulated_latent_rel_l1",
+        }:
+            raise ValueError(
+                "CFG cache metric must be cond_output_rel_l1 or "
+                "timestep_modulated_input_rel_l1.")
 
 
 @dataclass
 class CFGCacheState:
     cached_delta: Optional[torch.Tensor] = None
     last_full_cond: Optional[torch.Tensor] = None
+    last_metric_feature: Optional[torch.Tensor] = None
     reuse_streak: int = 0
     reuse_count: int = 0
     recompute_count: int = 0
@@ -41,7 +51,10 @@ class CFGCacheState:
     recompute_path: List[int] = field(default_factory=list)
 
     def has_history(self) -> bool:
-        return self.cached_delta is not None and self.last_full_cond is not None
+        return (
+            self.cached_delta is not None and
+            self.last_full_cond is not None and
+            self.last_metric_feature is not None)
 
     def record_reuse(self, step_index: int):
         self.reuse_streak += 1
@@ -53,9 +66,11 @@ class CFGCacheState:
         step_index: int,
         cond: torch.Tensor,
         uncond: torch.Tensor,
+        metric_feature: torch.Tensor,
     ):
         self.cached_delta = self._enhance(cond - uncond).detach().clone()
         self.last_full_cond = cond.detach().clone()
+        self.last_metric_feature = metric_feature.detach().clone()
         self.reuse_streak = 0
         self.recompute_count += 1
         self.recompute_path.append(step_index)
@@ -79,7 +94,8 @@ class CFGCache:
         key: Hashable,
         step_index: int,
         num_steps: int,
-        cond: torch.Tensor,
+        cond: Optional[torch.Tensor] = None,
+        metric_feature: Optional[torch.Tensor] = None,
     ) -> bool:
         state = self.state(key)
         if not self.config.enabled or not state.has_history():
@@ -93,7 +109,10 @@ class CFGCache:
         if state.reuse_streak >= self.config.max_reuse:
             return False
 
-        cfg_diff = self._relative_l1(cond, state.last_full_cond)
+        metric_feature = self.metric_feature(
+            cond,
+            metric_feature=metric_feature)
+        cfg_diff = self._relative_l1(metric_feature, state.last_metric_feature)
         state.diff_path.append((step_index, cfg_diff))
         return cfg_diff < self.config.threshold
 
@@ -115,9 +134,13 @@ class CFGCache:
         cond: torch.Tensor,
         uncond: torch.Tensor,
         guide_scale: float,
+        metric_feature: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         state = self.state(key)
-        state.record_recompute(step_index, cond, uncond)
+        metric_feature = self.metric_feature(
+            cond,
+            metric_feature=metric_feature)
+        state.record_recompute(step_index, cond, uncond, metric_feature)
         return cond + (guide_scale - 1.0) * (cond - uncond)
 
     def summary(self) -> Dict[str, Dict[str, object]]:
@@ -133,8 +156,25 @@ class CFGCache:
                 "max_reuse": self.config.max_reuse,
                 "start": self.config.start,
                 "end": self.config.end,
+                "metric": self.config.metric,
             }
         return result
+
+    def metric_feature(
+        self,
+        cond: Optional[torch.Tensor] = None,
+        metric_feature: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if self.config.metric == "cond_output_rel_l1":
+            if cond is None:
+                raise ValueError("cond_output_rel_l1 requires cond output.")
+            return cond.detach()
+
+        if metric_feature is None:
+            raise ValueError(
+                "timestep_modulated_input_rel_l1 requires a model-provided "
+                "metric_feature.")
+        return metric_feature.detach()
 
     def _relative_l1(self, current: torch.Tensor, previous: torch.Tensor) -> float:
         diff = (current - previous).abs().sum()

@@ -340,12 +340,22 @@ def _parse_args():
         "--cfg_threshold",
         type=float,
         default=0.05,
-        help="CFG cache relative-L1 threshold between current cond and last full CFG cond.")
+        help="CFG cache relative-L1 threshold for the selected cfg_metric.")
+    parser.add_argument(
+        "--cfg_metric",
+        type=str,
+        default="timestep_modulated_input_rel_l1",
+        choices=[
+            "cond_output_rel_l1",
+            "timestep_modulated_input_rel_l1",
+            "timestep_modulated_latent_rel_l1",
+        ],
+        help="CFG cache reuse metric. timestep_modulated_input_rel_l1 compares model-internal timestep-modulated input features; cond_output_rel_l1 keeps the original cond-output criterion.")
     parser.add_argument(
         "--cfg_max_reuse",
         type=int,
         default=3,
-        help="Maximum consecutive CFG cache hits before forcing an uncond recompute.")
+        help="Maximum consecutive CFG cache hits before forcing a full CFG refresh.")
     parser.add_argument(
         "--cfg_eps",
         type=float,
@@ -355,7 +365,7 @@ def _parse_args():
         "--cfg_force_uncond_recompute_on_miss",
         action="store_true",
         default=False,
-        help="When CFG cache misses, force the uncond branch to recompute and refresh timestep/block cache state.")
+        help="When CFG cache misses, force a full CFG refresh: recompute both cond and uncond branches, bypassing timestep/block reuse for that refresh.")
     parser.add_argument(
         "--zeus_acc_start",
         type=int,
@@ -676,6 +686,7 @@ def generate(args):
                 threshold=args.cfg_threshold,
                 max_reuse=args.cfg_max_reuse,
                 eps=args.cfg_eps,
+                metric=args.cfg_metric,
                 force_uncond_recompute_on_miss=args.cfg_force_uncond_recompute_on_miss,
             )
             logging.info(f"Enabled CFG cache: {cfg_cache_config}")

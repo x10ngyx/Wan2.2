@@ -1,0 +1,34 @@
+# 2026-06-10 three-cache threshold grid launch
+
+- User requested at least four thresholds per cache, from near no-use to near full-use, and explicitly required avoiding repeated weight loading.
+- Added `experiments/three_cache_threshold_grid_50step_45f_480p/`:
+  - `run_grid.py`: one-process `WanT2V` runner that evaluates all threshold combinations sequentially after a single pipeline/checkpoint load.
+  - `run_tmux.sh`: tmux launcher with result symlink creation, `launch.env`, GPU precheck, and cache env vars under `/hy-tmp`.
+  - `README.md`: short usage and default threshold documentation.
+- Default thresholds:
+  - timestep `zeus-threshold`: `0.001 0.005 0.02 0.60`
+  - block-group: `0.001 0.015 0.03 1.00`
+  - CFG: `0.001 0.02 0.03 1.00`
+  - total combinations: `64`
+- Fixed settings: prompt 01, seed `42`, `832*480`, 45 frames, 50 dpm++ steps, offload enabled, convert dtype enabled, timestep `acc_range=(8,47)`, `reuse_interp`, `max_interval=6`, block-group `group_size=5`, `pooled_rel_l1`, start/end `0.1/0.9`, max reuse `3`, CFG metric `timestep_modulated_input_rel_l1`, start/end `0.1/0.9`, max reuse `3`, and `force_uncond_recompute_on_miss=False`.
+- Validation passed:
+  - conda `py_compile` for `run_grid.py`, ablation runner, `generate.py`, `wan/text2video.py`, `wan/cfg_cache.py`, `wan/block_group_cache.py`, and `wan/timestep_cache.py`
+  - `run_grid.py --help`
+  - `bash -n run_tmux.sh`
+  - threshold product check: `64` combinations
+- GPU prelaunch check: A100 80GB idle, no existing tmux server, `/hy-tmp` had about `152G` free.
+- Launched tmux session `three_cache_grid_p01_20260610_012518`.
+- Result root: `/hy-tmp/wan22_three_cache_threshold_grid_prompt01_50step_45f_480p_20260610_012518`.
+- Workspace symlink: `experiment_results/wan22_three_cache_threshold_grid_prompt01_50step_45f_480p_20260610_012518`.
+- Launch verification: tmux session exists, baseline and ffprobe were copied, `launch.env` and `experiment_config.json` were created, and pane output reached `Creating one WanT2V pipeline for 64 threshold combinations.`
+- First completion check: candidate `ts_0p001__bg_0p001__cfg_0p001` finished successfully with video, config, raw log, ffprobe JSON, PSNR JSON/log, `results/summary.csv`, and `results/aggregate.json`.
+- First candidate metrics: compute `557.073s`, speedup `0.938x` vs `522.603s` baseline, PSNR `Infinity` because all 45 frames were perfect and excluded by the FFmpeg PSNR helper.
+- First candidate cache behavior: timestep reuse `0`, block-group reuse `0`, CFG reuse `0`, matching the near-no-use threshold setting `0.001/0.001/0.001`.
+- Runner continued to candidate `2/64`, `ts_0p001__bg_0p001__cfg_0p02`, in the same tmux session without reloading the pipeline.
+- Completion check: tmux session `three_cache_grid_p01_20260610_012518` exited after completing all `64/64` candidates. GPU was idle and `failed/` was empty.
+- Archive completeness: 64 candidate videos, 64 PSNR JSON files, 64 logs/configs, 64 candidate ffprobe JSON files plus the baseline ffprobe, `results/summary.csv`, and `results/aggregate.json`.
+- Headline results:
+  - fastest: `ts_0p6__bg_1__cfg_1`, `128.093s`, `4.080x`, PSNR `15.225 dB`
+  - best speed with PSNR `>=25 dB`: `ts_0p005__bg_0p001__cfg_0p001`, `502.999s`, `1.039x`, PSNR `26.954 dB`
+  - best speed with PSNR `>=22 dB`: `ts_0p005__bg_0p015__cfg_0p03`, `434.207s`, `1.204x`, PSNR `23.448 dB`
+  - best speed with PSNR `>=20 dB`: `ts_0p005__bg_0p03__cfg_0p02`, `381.699s`, `1.369x`, PSNR `20.042 dB`
