@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 import argparse
-import ast
 import contextlib
+import csv
 import json
 import logging
-import os
 import re
 import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -17,8 +17,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+DEFAULT_DATASET_ZIP = "/hy-tmp/openvid_100_wan22_prompts.zip"
+DEFAULT_DATASET_MEMBER = "openvid_100_wan22_prompts/dataset_100.jsonl"
 DEFAULT_THRESHOLDS = "0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.60 0.70 0.80"
-DEFAULT_BASELINE_ROOT = "/hy-tmp/wan22_zeus_threshold_reuse_interp_10prompt_5th_20260608_195427"
+DEFAULT_PROMPT_START = 75
+DEFAULT_PROMPT_LIMIT = 25
 DEFAULT_FFPROBE = "/hy-tmp/miniconda3/envs/Wan2.2/bin/ffprobe"
 
 
@@ -36,17 +39,45 @@ class Tee:
             stream.flush()
 
 
-def read_prompts(path: Path):
-    text = path.read_text(encoding="utf-8").strip()
-    data = ast.literal_eval("{" + text + "}")
-    prompts = data["prompts"]
-    if not isinstance(prompts, list):
-        raise ValueError("prompt.txt must contain a prompts list")
-    return [prompt.replace("\n", " ").strip() for prompt in prompts]
+def sanitize_id(value: str) -> str:
+    value = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
+    return value.strip("._-") or "sample"
 
 
 def threshold_label(value: str) -> str:
     return f"th_{value.replace('.', 'p').replace('-', '_')}"
+
+
+def load_openvid_records(dataset_zip: Path, dataset_member: str):
+    with zipfile.ZipFile(dataset_zip) as zf:
+        raw = zf.read(dataset_member).decode("utf-8")
+    rows = []
+    seen = set()
+    for line_no, line in enumerate(raw.splitlines(), 1):
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        for field in ["id", "text", "video"]:
+            if field not in row:
+                raise ValueError(f"Missing {field!r} in {dataset_member}:{line_no}")
+        sample_id = sanitize_id(str(row["id"]))
+        if sample_id in seen:
+            raise ValueError(f"Duplicate sample id after sanitizing: {sample_id}")
+        seen.add(sample_id)
+        row = dict(row)
+        row["sample_id"] = sample_id
+        row["prompt"] = row["text"].replace("\n", " ").strip()
+        rows.append(row)
+    return rows
+
+
+def select_records(records, start: int, limit: int):
+    selected = records[start:]
+    if limit > 0:
+        selected = selected[:limit]
+    if not selected:
+        raise SystemExit("No OpenVid records selected")
+    return selected
 
 
 def parse_elapsed(log_path: Path):
@@ -57,15 +88,6 @@ def parse_elapsed(log_path: Path):
     if not matches:
         return None
     return float(matches[-1])
-
-
-def read_time_file(path: Path):
-    if not path.exists():
-        return None
-    match = re.search(r"elapsed_seconds=([0-9.]+)", path.read_text(encoding="utf-8", errors="replace"))
-    if not match:
-        return None
-    return float(match.group(1))
 
 
 def write_failed(root: Path, name: str, fields):
@@ -146,29 +168,23 @@ def maybe_completed(video: Path, time_file: Path, ffprobe_json: Path, psnr_json:
     return all(path.exists() and path.stat().st_size > 0 for path in required)
 
 
-def copy_baseline_artifacts(args, prompt_index: str, exp_root: Path):
-    source_root = Path(args.baseline_root)
-    baseline_video = exp_root / "baseline" / f"prompt_{prompt_index}.mp4"
-    baseline_ffprobe = exp_root / "ffprobe" / f"baseline_prompt_{prompt_index}.json"
-    baseline_time = exp_root / "logs" / f"baseline_prompt_{prompt_index}.time"
-    baseline_log = exp_root / "logs" / f"baseline_prompt_{prompt_index}.log"
+def write_manifest(path: Path, records):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        for row in records:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    source_video = source_root / "baseline" / f"prompt_{prompt_index}.mp4"
-    source_ffprobe = source_root / "ffprobe" / f"baseline_prompt_{prompt_index}.json"
-    source_time = source_root / "logs" / f"baseline_prompt_{prompt_index}.time"
-    source_log = source_root / "logs" / f"baseline_prompt_{prompt_index}.log"
-    for source, dest in [
-        (source_video, baseline_video),
-        (source_ffprobe, baseline_ffprobe),
-        (source_time, baseline_time),
-        (source_log, baseline_log),
-    ]:
-        if not source.exists() or source.stat().st_size == 0:
-            raise FileNotFoundError(f"Missing reusable baseline artifact: {source}")
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if not dest.exists() or dest.stat().st_size == 0:
-            shutil.copy2(source, dest)
-    return baseline_video, baseline_ffprobe, baseline_time, baseline_log
+
+def write_manifest_csv(path: Path, records):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = [
+        "sample_id", "id", "text", "video", "source_video", "part",
+        "content_group", "portrait_group", "motion_group",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(records)
 
 
 def make_seacache_config(args, threshold: str):
@@ -211,6 +227,8 @@ def generate_one(args, pipeline, cfg, prompt: str, seed: int, output: Path, log_
         logging.info(f"Input prompt: {prompt}")
         logging.info(f"Generating video to {output}")
         logging.info(f"timestep_cache_config={cache_config}")
+        logging.info("block_cache_config=None")
+        logging.info("cfg_cache_config=None")
         start = time.perf_counter()
         video = pipeline.generate(
             prompt,
@@ -245,50 +263,52 @@ def generate_one(args, pipeline, cfg, prompt: str, seed: int, output: Path, log_
 
 
 def cpu_validate(args):
-    prompts = read_prompts(Path(args.prompt_file))
-    selected = prompts[args.prompt_start:]
-    if args.prompt_limit > 0:
-        selected = selected[:args.prompt_limit]
+    dataset_zip = Path(args.dataset_zip)
+    if not dataset_zip.exists():
+        raise SystemExit(f"Missing dataset zip: {dataset_zip}")
+    records = load_openvid_records(dataset_zip, args.dataset_member)
+    selected = select_records(records, args.prompt_start, args.prompt_limit)
     thresholds = args.thresholds.split()
-    if not selected:
-        raise SystemExit("No prompts selected")
-    if not thresholds:
-        raise SystemExit("No thresholds selected")
-    baseline_root = Path(args.baseline_root)
-    missing = []
-    if not args.generate_baseline:
-        for offset, _prompt in enumerate(selected):
-            prompt_index = f"{args.prompt_start + offset + 1:02d}"
-            for rel in [
-                Path("baseline") / f"prompt_{prompt_index}.mp4",
-                Path("ffprobe") / f"baseline_prompt_{prompt_index}.json",
-                Path("logs") / f"baseline_prompt_{prompt_index}.time",
-            ]:
-                path = baseline_root / rel
-                if not path.exists() or path.stat().st_size == 0:
-                    missing.append(str(path))
+    threshold_errors = []
+    for value in thresholds:
+        try:
+            parsed = float(value)
+            if parsed < 0:
+                threshold_errors.append(value)
+        except ValueError:
+            threshold_errors.append(value)
     result = {
-        "status": "ok" if not missing else "missing_baseline_artifacts",
-        "prompt_count": len(selected),
+        "status": "ok" if not threshold_errors else "invalid_thresholds",
+        "dataset_zip": str(dataset_zip),
+        "dataset_member": args.dataset_member,
+        "total_dataset_records": len(records),
+        "prompt_start": args.prompt_start,
+        "prompt_limit": args.prompt_limit,
+        "selected_prompt_count": len(selected),
+        "threshold_count": len(thresholds),
         "thresholds": thresholds,
-        "generate_baseline": args.generate_baseline,
-        "baseline_root": str(baseline_root),
-        "missing": missing,
+        "invalid_thresholds": threshold_errors,
+        "expected_baseline_runs": len(selected),
         "expected_candidate_runs": len(selected) * len(thresholds),
         "single_process_pipeline_load": True,
+        "timestep_cache": "seacache",
+        "block_cache": "none",
+        "cfg_cache": "none",
+        "sample_ids_head": [row["sample_id"] for row in selected[:5]],
+        "sample_ids_tail": [row["sample_id"] for row in selected[-5:]],
     }
     print(json.dumps(result, indent=2))
-    if missing:
+    if threshold_errors:
         raise SystemExit(2)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Single-process SeaCache T2V batch runner")
+    parser = argparse.ArgumentParser(description="Single-process OpenVid-100 SeaCache T2V runner")
     parser.add_argument("--root_dir", default="/hy-tmp/work/Wan2.2")
     parser.add_argument("--python_bin", default=sys.executable)
     parser.add_argument("--ckpt_dir", default="/hy-tmp/models/Wan2.2-T2V-A14B")
-    parser.add_argument("--prompt_file", default="/hy-tmp/work/Wan2.2/prompt.txt")
-    parser.add_argument("--baseline_root", default=DEFAULT_BASELINE_ROOT)
+    parser.add_argument("--dataset_zip", default=DEFAULT_DATASET_ZIP)
+    parser.add_argument("--dataset_member", default=DEFAULT_DATASET_MEMBER)
     parser.add_argument("--exp_root", default=None)
     parser.add_argument("--task", default="t2v-A14B")
     parser.add_argument("--size", default="832*480")
@@ -299,13 +319,12 @@ def main():
     parser.add_argument("--sample_guide_scale", type=float, nargs=2, default=None)
     parser.add_argument("--base_seed", type=int, default=42)
     parser.add_argument("--thresholds", default=DEFAULT_THRESHOLDS)
-    parser.add_argument("--prompt_limit", type=int, default=1)
-    parser.add_argument("--prompt_start", type=int, default=0)
+    parser.add_argument("--prompt_limit", type=int, default=DEFAULT_PROMPT_LIMIT)
+    parser.add_argument("--prompt_start", type=int, default=DEFAULT_PROMPT_START)
     parser.add_argument("--offload_model", type=lambda value: value.lower() in {"1", "true", "yes", "y"}, default=True)
     parser.add_argument("--convert_model_dtype", action="store_true", default=True)
     parser.add_argument("--no_convert_model_dtype", dest="convert_model_dtype", action="store_false")
     parser.add_argument("--resume_existing", action="store_true")
-    parser.add_argument("--generate_baseline", action="store_true")
     parser.add_argument("--cpu_validate", action="store_true")
     parser.add_argument("--ffprobe_bin", default=DEFAULT_FFPROBE)
     parser.add_argument("--seacache_num_steps", type=int, default=None)
@@ -321,14 +340,13 @@ def main():
         return
 
     import torch
-    import wan
-    from wan.configs import SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
+    from wan.configs import SUPPORTED_SIZES, WAN_CONFIGS
 
     root_dir = Path(args.root_dir)
     tools_dir = root_dir / "experiments" / "zeus_timestep_cache_50step_45f_480p"
     if args.exp_root is None:
         stamp = time.strftime("%Y%m%d_%H%M%S")
-        args.exp_root = f"/hy-tmp/wan22_seacache_50step_45f_480p_{stamp}"
+        args.exp_root = f"/hy-tmp/wan22_seacache_openvid100_50step_45f_480p_{stamp}"
     exp_root = Path(args.exp_root)
     thresholds = args.thresholds.split()
 
@@ -346,15 +364,10 @@ def main():
     else:
         args.sample_guide_scale = tuple(args.sample_guide_scale)
 
-    prompts = read_prompts(Path(args.prompt_file))
-    if args.prompt_start:
-        prompts = prompts[args.prompt_start:]
-    if args.prompt_limit > 0:
-        prompts = prompts[:args.prompt_limit]
-    if not prompts:
-        raise SystemExit("No prompts selected")
+    records = load_openvid_records(Path(args.dataset_zip), args.dataset_member)
+    selected = select_records(records, args.prompt_start, args.prompt_limit)
 
-    for subdir in ["baseline", "seacache", "thresholds", "logs", "commands", "ffprobe", "psnr", "results", "failed"]:
+    for subdir in ["baseline", "seacache", "thresholds", "logs", "commands", "ffprobe", "psnr", "results", "failed", "manifests"]:
         (exp_root / subdir).mkdir(parents=True, exist_ok=True)
     for threshold in thresholds:
         label = threshold_label(threshold)
@@ -362,14 +375,17 @@ def main():
         (exp_root / "psnr" / label).mkdir(parents=True, exist_ok=True)
         (exp_root / "thresholds" / f"{label}.env").write_text(f"threshold={threshold}\n", encoding="utf-8")
 
+    write_manifest(exp_root / "manifests" / "selected_openvid_records.jsonl", selected)
+    write_manifest_csv(exp_root / "manifests" / "selected_openvid_records.csv", selected)
+    shutil.copy2(Path(args.dataset_zip), exp_root / "manifests" / Path(args.dataset_zip).name)
+
     env = {
         "experiment_root": exp_root,
         "root_dir": root_dir,
         "python_bin": args.python_bin,
         "ckpt_dir": args.ckpt_dir,
-        "prompt_file": args.prompt_file,
-        "baseline_root": args.baseline_root,
-        "generate_baseline": args.generate_baseline,
+        "dataset_zip": args.dataset_zip,
+        "dataset_member": args.dataset_member,
         "ffprobe_bin": args.ffprobe_bin,
         "task": args.task,
         "size": args.size,
@@ -382,85 +398,96 @@ def main():
         "thresholds": args.thresholds,
         "prompt_start": args.prompt_start,
         "prompt_limit": args.prompt_limit,
+        "selected_prompt_count": len(selected),
+        "expected_candidate_runs": len(selected) * len(thresholds),
         "resume_existing": args.resume_existing,
+        "timestep_cache": "seacache",
+        "block_cache": "none",
+        "cfg_cache": "none",
         "seacache_num_steps": args.seacache_num_steps,
         "seacache_use_ret_steps": args.seacache_use_ret_steps,
         "seacache_power_exp": args.seacache_power_exp,
         "seacache_power_const": args.seacache_power_const,
         "seacache_eps": args.seacache_eps,
         "seacache_norm_mode": args.seacache_norm_mode,
-        "block_cache": "none",
-        "cfg_cache": "none",
     }
     (exp_root / "experiment.env").write_text("".join(f"{k}={v}\n" for k, v in env.items()), encoding="utf-8")
     subprocess.run(["nvidia-smi"], stdout=(exp_root / "gpu.txt").open("w", encoding="utf-8"), stderr=subprocess.STDOUT)
 
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(message)s")
     print(json.dumps({k: str(v) for k, v in env.items()}, indent=2))
-    print("Creating WanT2V pipeline once for SeaCache batch run")
+    print("Creating WanT2V pipeline once for OpenVid SeaCache batch run")
     pipeline_log = exp_root / "logs" / "pipeline_init.log"
     with run_log_context(pipeline_log):
         pipeline = create_pipeline(args, cfg)
 
-    for offset, prompt in enumerate(prompts):
-        prompt_index = f"{args.prompt_start + offset + 1:02d}"
+    for row in selected:
+        sample_id = row["sample_id"]
+        prompt = row["prompt"]
         seed = args.base_seed
-        baseline_video = exp_root / "baseline" / f"prompt_{prompt_index}.mp4"
-        baseline_log = exp_root / "logs" / f"baseline_prompt_{prompt_index}.log"
-        baseline_time = exp_root / "logs" / f"baseline_prompt_{prompt_index}.time"
-        baseline_ffprobe = exp_root / "ffprobe" / f"baseline_prompt_{prompt_index}.json"
+        baseline_video = exp_root / "baseline" / f"{sample_id}.mp4"
+        baseline_log = exp_root / "logs" / f"baseline_{sample_id}.log"
+        baseline_time = exp_root / "logs" / f"baseline_{sample_id}.time"
+        baseline_ffprobe = exp_root / "ffprobe" / f"baseline_{sample_id}.json"
         save_command_record(
-            exp_root / "commands" / f"baseline_prompt_{prompt_index}.sh",
+            exp_root / "commands" / f"baseline_{sample_id}.sh",
             root_dir,
             sys.argv,
-            {"method": "baseline", "prompt_index": prompt_index, "seed": seed, "output": baseline_video},
+            {
+                "method": "baseline",
+                "sample_id": sample_id,
+                "seed": seed,
+                "output": baseline_video,
+                "prompt": prompt,
+                "block_cache": "none",
+                "cfg_cache": "none",
+            },
         )
-        if args.generate_baseline:
-            if args.resume_existing and maybe_completed(baseline_video, baseline_time, baseline_ffprobe):
-                print(f"Skipping existing generated baseline prompt {prompt_index}")
-            else:
-                print(f"Running baseline prompt {prompt_index} seed {seed}")
-                try:
-                    generate_one(args, pipeline, cfg, prompt, seed, baseline_video, baseline_log, None)
-                    elapsed = parse_elapsed(baseline_log)
-                    baseline_time.write_text(f"elapsed_seconds={elapsed if elapsed is not None else ''}\n", encoding="utf-8")
-                    run_ffprobe(args.ffprobe_bin, baseline_video, baseline_ffprobe)
-                except Exception as exc:
-                    write_failed(exp_root, f"baseline_prompt_{prompt_index}", {
-                        "method": "baseline", "prompt_index": prompt_index, "seed": seed,
-                        "status": "exception", "error": repr(exc), "log": baseline_log,
-                    })
-                    raise
+        if args.resume_existing and maybe_completed(baseline_video, baseline_time, baseline_ffprobe):
+            print(f"Skipping existing baseline {sample_id}")
         else:
-            baseline_video, baseline_ffprobe, baseline_time, baseline_log = copy_baseline_artifacts(args, prompt_index, exp_root)
+            print(f"Running baseline {sample_id} seed {seed}")
+            try:
+                generate_one(args, pipeline, cfg, prompt, seed, baseline_video, baseline_log, None)
+                elapsed = parse_elapsed(baseline_log)
+                baseline_time.write_text(f"elapsed_seconds={elapsed if elapsed is not None else ''}\n", encoding="utf-8")
+                run_ffprobe(args.ffprobe_bin, baseline_video, baseline_ffprobe)
+                torch.cuda.empty_cache()
+            except Exception as exc:
+                write_failed(exp_root, f"baseline_{sample_id}", {
+                    "method": "baseline", "sample_id": sample_id, "seed": seed,
+                    "status": "exception", "error": repr(exc), "log": baseline_log,
+                })
+                raise
 
         for threshold in thresholds:
             label = threshold_label(threshold)
             method_id = f"seacache_{label}"
-            output = exp_root / "seacache" / label / f"prompt_{prompt_index}.mp4"
-            log_path = exp_root / "logs" / f"{method_id}_prompt_{prompt_index}.log"
-            time_file = exp_root / "logs" / f"{method_id}_prompt_{prompt_index}.time"
-            ffprobe_json = exp_root / "ffprobe" / f"{method_id}_prompt_{prompt_index}.json"
-            psnr_json = exp_root / "psnr" / label / f"prompt_{prompt_index}.json"
-            psnr_log = exp_root / "psnr" / label / f"prompt_{prompt_index}.log"
+            output = exp_root / "seacache" / label / f"{sample_id}.mp4"
+            log_path = exp_root / "logs" / f"{method_id}_{sample_id}.log"
+            time_file = exp_root / "logs" / f"{method_id}_{sample_id}.time"
+            ffprobe_json = exp_root / "ffprobe" / f"{method_id}_{sample_id}.json"
+            psnr_json = exp_root / "psnr" / label / f"{sample_id}.json"
+            psnr_log = exp_root / "psnr" / label / f"{sample_id}.log"
             save_command_record(
-                exp_root / "commands" / f"{method_id}_prompt_{prompt_index}.sh",
+                exp_root / "commands" / f"{method_id}_{sample_id}.sh",
                 root_dir,
                 sys.argv,
                 {
                     "method": "seacache",
                     "threshold": threshold,
-                    "prompt_index": prompt_index,
+                    "sample_id": sample_id,
                     "seed": seed,
                     "output": output,
+                    "prompt": prompt,
                     "block_cache": "none",
                     "cfg_cache": "none",
                 },
             )
             if args.resume_existing and maybe_completed(output, time_file, ffprobe_json, psnr_json):
-                print(f"Skipping existing SeaCache {threshold} prompt {prompt_index}")
+                print(f"Skipping existing SeaCache {threshold} {sample_id}")
                 continue
-            print(f"Running SeaCache {threshold} prompt {prompt_index} seed {seed}")
+            print(f"Running SeaCache {threshold} {sample_id} seed {seed}")
             try:
                 if not (args.resume_existing and output.exists() and output.stat().st_size > 0 and time_file.exists() and time_file.stat().st_size > 0):
                     generate_one(args, pipeline, cfg, prompt, seed, output, log_path, make_seacache_config(args, threshold))
@@ -472,9 +499,9 @@ def main():
                 if not (args.resume_existing and psnr_json.exists() and psnr_json.stat().st_size > 0):
                     run_psnr(args.python_bin, tools_dir, baseline_video, output, psnr_json, psnr_log)
             except Exception as exc:
-                write_failed(exp_root, f"{method_id}_prompt_{prompt_index}", {
+                write_failed(exp_root, f"{method_id}_{sample_id}", {
                     "method": "seacache", "threshold": threshold, "threshold_label": label,
-                    "prompt_index": prompt_index, "seed": seed, "status": "exception",
+                    "sample_id": sample_id, "seed": seed, "status": "exception",
                     "error": repr(exc), "log": log_path,
                 })
                 raise
@@ -482,7 +509,7 @@ def main():
     summary_log = exp_root / "results" / "summary.log"
     cmd = [
         args.python_bin,
-        str(root_dir / "experiments" / "seacache_50step_45f_480p" / "summarize_results.py"),
+        str(root_dir / "experiments" / "seacache_openvid100_50step_45f_480p" / "summarize_results.py"),
         "--experiment-root", str(exp_root),
         "--output", str(exp_root / "results" / "summary.csv"),
     ]

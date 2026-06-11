@@ -14,7 +14,7 @@ Configuration follows the completed ZEUS-threshold reuse-interp run:
 - Method: `--timestep_cache seacache`
 - Block cache: disabled
 - CFG cache: disabled
-- Default SeaCache thresholds: `0.05 0.10 0.20 0.30 0.50`
+- Default SeaCache thresholds: `0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.60 0.70 0.80`
 
 Run CPU validation only:
 

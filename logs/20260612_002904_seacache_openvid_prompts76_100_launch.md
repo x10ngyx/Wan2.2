@@ -1,0 +1,23 @@
+# 2026-06-12 SeaCache OpenVid Prompts 76-100 Launch
+
+- User clarified the current data-generation assignment:
+  - method: SeaCache
+  - thresholds: `0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.60 0.70 0.80`
+  - this machine: OpenVid prompts 76-100
+- Updated local OpenVid SeaCache defaults:
+  - `experiments/seacache_openvid100_50step_45f_480p/run_batch.py`
+  - `experiments/seacache_openvid100_50step_45f_480p/run_tmux.sh`
+  - `experiments/seacache_openvid100_50step_45f_480p/README.md`
+- Prompt range uses zero-based manifest indexing: `prompt_start=75`, `prompt_limit=25`, selecting `openvidhd_part1_075` through `openvidhd_part1_099`.
+- Validation passed:
+  - conda `py_compile` for runner and summarizer
+  - `bash -n run_tmux.sh`
+  - `run_batch.py --cpu_validate`
+  - CPU validation reported 25 selected prompts, 10 thresholds, 25 expected baselines, and 250 expected SeaCache candidate runs.
+- Preflight:
+  - `tmux ls` reported no existing tmux server.
+  - `nvidia-smi` showed the A100 80GB GPU idle with no running processes.
+- Launched tmux session `seacache_openvid100_20260612_002814`.
+- Result root: `/hy-tmp/wan22_seacache_openvid100_50step_45f_480p_20260612_002814`.
+- Workspace symlink: `experiment_results/wan22_seacache_openvid100_50step_45f_480p_20260612_002814`.
+- Launch check confirmed `launch.env`, `experiment.env`, selected manifests, all 10 threshold env files, `runner.log`, and `logs/pipeline_init.log` were created. The Python runner process remained active and no failure files were present at the last check.
