@@ -1,255 +1,199 @@
 # Progress
 
-## 2026-06-06
+## 2026-06-13 Initialization Snapshot
+
+This file has been reset from the old long-form session history. Historical details were reviewed and condensed into this initialization state. Use this file as the current handoff source going forward.
+
+## Current Goal
+
+The project is a Wan2.2 T2V-14B inference-acceleration study with three stages:
+
+1. Implement three threshold-based cache methods for inference acceleration:
+   - timestep cache
+   - block cache
+   - CFG cache
+2. Generate data mapping threshold combinations to video quality and speed:
+   - threshold combination -> PSNR / speedup / reuse statistics / failure state
+3. Build adaptive inference acceleration:
+   - train a small predictor that takes target quality and speed requirements and predicts a threshold combination for inference.
+
+## Environment And Resources
+
+- Workspace: `/hy-tmp/work/Wan2.2`
+- Conda environment: `/hy-tmp/miniconda3/envs/Wan2.2` (`Wan2.2`)
+- Model weights: `/hy-tmp/models/Wan2.2-T2V-A14B`
+- Model directory size: about `118G`
+- OpenVid-100 prompts: `/hy-tmp/openvid_100_wan22_prompts.zip`
+- Reports directory: `reports/`
+- Result symlink directory: `experiment_results/`
+- Data disk: `/hy-tmp`, about `400G`; current check showed about `136G` free.
+- Current GPU check: `NVIDIA A100 80GB PCIe`, `81920 MiB`, driver `570.211.01`; GPU memory was idle at the latest check.
+- Current tmux check: no tmux server was running at the latest check.
+- OSS CLI was previously verified at `/usr/local/bin/oss`; relevant commands are `oss login`, `oss ls -s -d oss://datasets/`, and `oss cp ...`.
+- The OpenVid first-50 handoff archive was previously created and uploaded as `oss://datasets/wan22_openvid_first50_handoff.tar.gz`; local source was `/hy-tmp/wan22_openvid_first50_handoff.tar.gz` with SHA256 `ee3458b05944e4fa5439f62e3a2896d9f9920dbd4beabc0938a86fd64dfe7b9e`.
+
+## Implementation State
+
+Primary code paths:
+
+- CLI: `generate.py`
+- T2V pipeline: `wan/text2video.py`
+- timestep cache: `wan/timestep_cache.py`
+- block cache: `wan/block_cache.py`, `wan/block_group_cache.py`
+- CFG cache: `wan/cfg_cache.py`
+- transformer integration: `wan/modules/model.py`
+
+Implemented/available cache methods:
+
+- `--timestep_cache zeus`
+  - fixed ZEUS-style timestep cache.
+- `--timestep_cache zeus-threshold`
+  - threshold-based timestep cache using latent relative-L1.
+  - recommended unified threshold alias: `--timestep_threshold`
+  - historical alias still works: `--zeus_threshold`
+- `--timestep_cache seacache`
+  - SeaCache-style timestep/block-residual cache, used mainly as a comparison and data-generation method.
+  - threshold argument: `--seacache_threshold`
+- `--block_cache block-group`
+  - recommended threshold-based block cache path.
+  - recommended unified threshold alias: `--block_threshold`
+  - historical alias still works: `--block_group_threshold`
+- `--block_cache bwcache`
+  - BWCache-style block cache.
+  - historical argument `--bwcache_thresh`; compatibility alias `--bwcache_threshold`.
+- `--cfg_cache threshold`
+  - threshold-based CFG delta cache.
+  - threshold argument: `--cfg_threshold`
+
+Important composition rule:
+
+- CFG cache is the outer branch-selection cache.
+- If CFG hits, skip uncond and reconstruct from cached CFG delta.
+- If CFG misses, run uncond and refresh CFG delta.
+- For each actual branch (`cond` or `uncond`), check timestep cache first.
+- Only when timestep cache misses should block cache logic run.
+- Only when both timestep and block caches miss should transformer blocks actually execute.
+- Cache state must be keyed explicitly by `model_stage` and `branch`; never infer branch from call parity.
+
+Recent interface cleanup:
+
+- `generate.py` now exposes compatible unified aliases:
+  - `--timestep_threshold` -> `--zeus_threshold`
+  - `--block_threshold` -> `--block_group_threshold`
+  - `--bwcache_threshold` -> `--bwcache_thresh`
+- No cache implementation logic was changed during this cleanup.
+
+## Experiment Defaults
+
+Unless a task says otherwise, use these defaults for Wan2.2 T2V cache experiments:
+
+- task/model: `t2v-A14B`
+- checkpoint: `/hy-tmp/models/Wan2.2-T2V-A14B`
+- seed: fixed `42`
+- size: `832*480`
+- frame count: `45`
+- sampling steps: `50`
+- solver: `dpm++`
+- offload: `--offload_model`
+- dtype conversion: `--convert_model_dtype`
+- baseline: no-cache output with same prompt/seed/shape
+- timing metric: `inference_compute_elapsed_seconds`
+- quality metric: FFmpeg PSNR against baseline, excluding perfect/Infinity frames where applicable
+- use single-process batch runners for threshold sweeps so one process loads the pipeline once and then runs all candidates.
+
+## Important Experiment Results
 
-- Initialized project progress tracking file.
-- Current task context: Wan2.2 T2V-14B inference acceleration experiments for timestep cache, block cache, and cfg cache.
-- No experiment runs have been recorded in this file yet.
+Fixed ZEUS 10-prompt formal run:
 
-## 2026-06-07
+- Result root: `/hy-tmp/wan22_zeus_timestep_cache_50step_45f_480p_full_20260608_114307`
+- Overall speedup: `1.986x`
+- Mean FFmpeg PSNR: `23.705 dB`
+- No failures were recorded.
 
-- Installed Miniconda under /hy-tmp/miniconda3 and created conda environment Wan2.2 at /hy-tmp/miniconda3/envs/Wan2.2.
-- Configured conda package cache under /hy-tmp/conda-pkgs; pip installs used /hy-tmp/pip-cache and Tsinghua PyPI mirror where practical.
-- Installed conservative PyTorch stack: torch==2.4.0+cu121, torchvision==0.19.0+cu121, torchaudio==2.4.0+cu121.
-- Installed README dependencies including opencv-python==4.11.0.86, diffusers==0.38.0, transformers==4.51.3, accelerate==1.13.0, numpy==1.26.4, dashscope==1.25.21, imageio-ffmpeg==0.6.0, and flash_attn==2.6.3.
-- pip check reported no broken requirements.
-- Current instance is not in GPU mode: nvidia-smi reports No devices were found, and torch.cuda.is_available() is False.
-- generate.py --help cannot run on this no-GPU instance because import-time code calls torch.cuda.current_device().
-- Reviewed ZEUS repository `Ting-Justin-Jiang/ZEUS` at commit `ceff240` and project page for "ZEUS: Zero-shot Efficient Unified Sparsity for Generative Models".
-- ZEUS paper PDF/arXiv was not publicly linked on the project page at review time; the project page marks Paper as "Coming Soon".
-- Main ZEUS implementation uses Diffusers monkey patches: `zeus/patch.py` attaches `CacheBus`, patches `pipeline.transformer`/`pipeline.unet`, and patches schedulers; `zeus/model.py` bypasses whole denoiser/transformer forward calls on scheduled skip steps; `zeus/solver.py` chooses skip steps and reconstructs skipped outputs via second-order/lagrange interpolation.
-- ZEUS Wan support targets Diffusers `WanPipeline` / `WanTransformer3DModel` with `FlowMatchEulerDiscreteScheduler`, demonstrated for `Wan-AI/Wan2.1-T2V-14B-Diffusers`; direct integration into this repo's native Wan2.2 inference path would require porting the scheduler/step-skip logic rather than reusing the patch as-is.
-- Implemented ZEUS-style timestep cache for native T2V inference only.
-- Added `wan/timestep_cache.py` with ZEUS config/state/helper classes. State is separated by `(model_stage, branch)`, giving independent high/low and cond/uncond histories.
-- Wired `WanT2V.generate()` to use the timestep cache around cond/uncond model calls while keeping the scheduler and model classes unchanged.
-- Added CLI interface: `--timestep_cache {none,zeus}` plus ZEUS parameters; added placeholder `--block_cache none` and `--cfg_cache none` interfaces without implementing those caches.
-- Verified syntax with both system Python and `/hy-tmp/miniconda3/envs/Wan2.2/bin/python` via `py_compile`. Full generation validation still requires a GPU-mode instance.
-- Refined the ZEUS timestep cache history gate to require the official three-slot `prev_f` warmup condition before skip eligibility.
-- Added experiment scripts under `experiments/zeus_timestep_cache_50step_45f_480p/` for Wan2.2 T2V-A14B, 50 steps, 45 frames, 480p, 10 prompts from `prompt.txt`, baseline vs ZEUS, ffprobe validation, PSNR, timing, speedup, cache reuse/recompute summaries, and failure records.
-- Current instance still reports no visible GPU via `nvidia-smi`; full inference/PSNR experiment execution was prepared but not run.
+ZEUS-threshold 10-prompt reuse_interp run:
 
-## 2026-06-08
+- Result root: `/hy-tmp/wan22_zeus_threshold_reuse_interp_10prompt_5th_20260608_195427`
+- It is the main reference baseline/result root reused by later prompt-01/prompt-02 comparisons.
+- Prompt-01 pilot showed threshold `0.005` had high PSNR but modest speedup; threshold `0.02+` dropped to roughly `18.6-18.9 dB` while giving higher speed.
 
-- Verified the HyCloud OSS CLI is installed at `/usr/local/bin/oss`.
-- `oss version` reports `v1.2.36+prod`, commit `0759e529f692a8dbca86be24aece46c00abc577d`.
-- Confirmed relevant commands for later model-weight downloads: `oss login`, `oss ls -s -d oss://datasets/`, and `oss cp oss://... /hy-tmp/...`; recursive prefix download uses `oss cp oss://bucket/prefix /hy-tmp/path -r`.
-- Re-read current in-repo ZEUS implementation logic. Confirmed the implemented path is native T2V timestep cache only: `generate.py` builds `ZeusTimestepCacheConfig`, `WanT2V.generate()` wraps separate cond/uncond model calls, and `wan/timestep_cache.py` maintains independent skip/recompute history per `(model_stage, branch)`.
-- Confirmed `--block_cache none` and `--cfg_cache none` remain placeholder CLI interfaces; block cache and CFG cache behavior are not implemented in the current repo.
-- Removed incomplete local model artifacts `/hy-tmp/models/Wan2.2-T2V-A14B`, `/hy-tmp/models/Wan2.2-T2V-A14B.tar`, and `/hy-tmp/Wan2.2-T2V-A14B.tar` before redownloading.
-- Logged into HyCloud OSS with the user-provided account and downloaded `oss://datasets/Wan2.2-T2V-A14B.tar` to `/hy-tmp/models/Wan2.2-T2V-A14B.tar`; OSS reported successful download of `117.53GB` in about `30m21s`.
-- Extracted the archive into `/hy-tmp/models/Wan2.2-T2V-A14B`. Verification found `31` extracted files matching the archive manifest, including 6 high-noise and 6 low-noise safetensor shards, `Wan2.1_VAE.pth`, and `models_t5_umt5-xxl-enc-bf16.pth`.
-- Post-extraction disk usage: `/hy-tmp/models/Wan2.2-T2V-A14B` is `118G`, archive is `118G`, and `/hy-tmp` has about `154G` available.
-- Added `zeus-threshold` timestep cache as a separate implementation without modifying the original `ZeusTimestepCache` classes. The new path compares current input latent relative-L1 distance against `--zeus_threshold` to decide reuse vs recompute, while preserving the existing `(model_stage, branch)` state separation and ZEUS output reuse modes.
-- Added CLI support for `--timestep_cache zeus-threshold` with `--zeus_threshold`, `--zeus_threshold_metric rel_l1`, and `--zeus_threshold_eps`. Block cache and CFG cache remain unimplemented placeholders.
-- Validation for `zeus-threshold`: conda and system `py_compile` passed for `generate.py`, `wan/text2video.py`, and `wan/timestep_cache.py`; a CPU dummy import-by-path check verified original fixed ZEUS skip behavior and threshold low/high latent-distance decisions.
-- Confirmed the original ZEUS implementation remains unchanged in `wan/timestep_cache.py`; the diff only appends new threshold classes. A corrected CPU smoke test verified original fixed-policy ZEUS skip/recompute and `reuse_interp` behavior.
-- Added ZEUS-threshold experiment scripts under `experiments/zeus_threshold_50step_45f_480p/` for Wan2.2 T2V-A14B, 50 steps, 45 frames, 480p, 10 prompts from `prompt.txt`, baseline plus five default thresholds `0.03 0.08 0.15 0.30 0.60`.
-- The threshold experiment script archives generated videos, full command scripts, raw logs, timing files, ffprobe JSON, PSNR JSON/logs vs baseline, failure records, per-prompt summary CSV, and aggregate-by-threshold CSV/JSON under `/hy-tmp`.
-- Validation for the threshold experiment scripts: `bash -n` passed for `run_experiments.sh`, conda `py_compile` passed for the summarizer and reused helper scripts, and the prompt parser returned 10 prompts. Full generation was not run because the current instance still has no visible GPU.
-- Current session re-read AGENTS workflow, `PROGRESS.md`, README, main T2V generation path, timestep cache implementation, and experiment scripts. Confirmed current HEAD includes ZEUS timestep cache and ZEUS-threshold cache, while block cache and CFG cache are still placeholder CLI interfaces only.
-- Current working tree before this session already had untracked `doc/` PDFs, untracked OSS/download logs, and a modified `PROGRESS.md`; this session only added this progress note and a concise session log.
-- Reviewed third-party experiment PDFs under `doc/`. Key takeaways: ZEUS-style timestep skipping has a useful quality/speed tradeoff, especially later/mid-late timestep ranges; naive specific-block skipping produced poor PSNR/SSIM despite modest speedups; step-level residual analysis recommends prioritizing output relative-L2 over cosine similarity, with mid steps most cache-friendly.
-- Installed lightweight `pypdf` in the existing Wan2.2 conda environment to extract text from the local PDF reports.
+Three-cache prompt-01 64-combination grid:
 
-- Current GPU-mode instance is usable: `nvidia-smi` reports NVIDIA A100 80GB PCIe, and `/hy-tmp/miniconda3/envs/Wan2.2/bin/python` reports `torch.cuda.is_available() == True`.
-- Completed environment dependency cleanup needed for `generate.py` import and video validation. Installed missing optional import dependencies including `decord`, S2V/Animate-related PyPI packages such as `librosa`, `onnxruntime`, `peft`, `sentencepiece`, `lightning`, `modelscope`, `GitPython`, and installed conda-forge `ffmpeg`/`ffprobe` into the `Wan2.2` env.
-- Post-install validation: `generate.py --help` succeeds; `ffprobe` reports version `8.1.1`; PyTorch remains `2.4.0+cu121` with CUDA visible. `pip check` still reports `decord 0.6.0 is not supported on this platform`, but `wan` imports successfully and T2V generation ran successfully.
-- Ran a small ZEUS smoke experiment at `/hy-tmp/wan22_smoke_zeus_20260608_0951` using prompt 01, seed `20260608`, `t2v-A14B`, `832*480`, `frame_num=5`, `sample_steps=8`, `sample_solver=dpm++`, `offload_model=True`, and `convert_model_dtype`.
-- Smoke baseline and ZEUS videos both generated successfully and were validated with `ffprobe`: `832x480`, `5` frames, `16 fps`, duration `0.312500s`. Command scripts, raw logs, timing files, ffprobe JSON, PSNR JSON, summary CSV, and aggregate JSON are archived under the smoke experiment root.
-- Smoke ZEUS run used `--zeus_acc_start 3 --zeus_acc_end 8 --zeus_denominator 2 --zeus_modular '(1,)' --zeus_lagrange_term 0` to force cache hits in a short run. Cache summary: high/cond reuse `2`, high/uncond reuse `2`, low/cond reuse `0`, low/uncond reuse `0`; total reuse `4`, recompute `12`.
-- Smoke summary: baseline elapsed `375s`, ZEUS elapsed `374s`, speedup `1.0027x`, mean PSNR `14.9169` over `5` frames. This is only a pipeline smoke test; the tiny step/frame count and forced early skipping are not a quality/speed setting for formal evaluation.
+- Result root: `/hy-tmp/wan22_three_cache_threshold_grid_prompt01_50step_45f_480p_20260610_012518`
+- Completed `64/64` candidates with no failed records.
+- Fastest candidate: `ts_0p6__bg_1__cfg_1`, `4.080x`, PSNR `15.225 dB`.
+- Best finite high-PSNR candidate above `25 dB`: `ts_0p005__bg_0p001__cfg_0p001`, `1.039x`, PSNR `26.954 dB`.
+- Best speed with PSNR `>=22 dB`: `ts_0p005__bg_0p015__cfg_0p03`, `1.204x`, PSNR `23.448 dB`.
+- Best speed with PSNR `>=20 dB`: `ts_0p005__bg_0p03__cfg_0p02`, `1.369x`, PSNR `20.042 dB`.
 
+Cache ablation prompt-01:
 
-- Updated ZEUS experiment requirements to align with `doc/wan22_zeus_test - 视频质量与加速比评估报告.pdf`: use fixed seed `42` for all prompts, use FFmpeg `psnr` filter `psnr_avg` with perfect frames (`PSNR > 100 dB`) excluded, and report speedup from compute-only inference time rather than full process wall time.
-- Updated `experiments/zeus_timestep_cache_50step_45f_480p/compute_psnr.py` to use the document-aligned FFmpeg PSNR method. The previous OpenCV decoded-frame PSNR for prompt 01 was backed up as `prompt_01.opencv_psnr.json` in the stopped run; FFmpeg PSNR for that prompt changed from `22.0652` to `25.0556`.
-- Updated ZEUS timestep and threshold experiment scripts to default `BASE_SEED=42` and use fixed seed `42` for every prompt instead of `BASE_SEED + i`.
-- Updated T2V timing instrumentation: `wan/text2video.py` logs `inference_compute_elapsed_seconds` and `inference_weight_transfer_elapsed_seconds`; experiment `.time` files now prefer compute-only inference time, excluding model loading, video saving, T5/high/low weight transfers, high/low CPU/GPU switching, and final offload. T5 encoding, denoising compute, scheduler steps, and VAE decode remain included.
-- Confirmed true no-offload is not appropriate on the current A100 80GB setup without model-parallel changes: high and low noise model directories are about `54G` each, plus `11G` T5 and activations. Current `offload_model=False` would also not fully disable stage movement because `WanT2V(init_on_cpu=True)` remains the default.
-- Created workspace result symlink directory `experiment_results/` and linked all `/hy-tmp/wan22_*` experiment result roots there for easier inspection from the repo.
-- Restarted the formal ZEUS timestep experiment in tmux after applying the aligned requirements. Current tmux session: `zeus_timestep_full_114307`; result root: `/hy-tmp/wan22_zeus_timestep_cache_50step_45f_480p_full_20260608_114307`; workspace symlink: `experiment_results/wan22_zeus_timestep_cache_50step_45f_480p_full_20260608_114307`.
-- 2026-06-08 12:18 CST monitor check: tmux session zeus_timestep_full_114307 is still running. Prompt 01 completed for baseline and ZEUS with validated videos, FFmpeg PSNR output, interim summary, and aggregate JSON archived. Prompt 01 compute-only timing: baseline 522.872s, ZEUS 263.628s, speedup 1.983x; FFmpeg mean PSNR 22.226 dB; total ZEUS reuse/recompute 50 / 50. Prompt 02 baseline is currently running and was at sampling step 32/50 in the tmux pane.
-- 2026-06-08 16:03 CST completion check: formal ZEUS timestep experiment finished and tmux is no longer running. Result root /hy-tmp/wan22_zeus_timestep_cache_50step_45f_480p_full_20260608_114307 contains 10 baseline videos, 10 ZEUS videos, command scripts, raw logs, timing files, ffprobe JSON, PSNR JSON/logs for all prompts, final summary.csv, and aggregate.json. No failure files were found. Aggregate results: num_pairs 10, total baseline compute time 5262.025s, total ZEUS compute time 2649.240s, overall speedup 1.986x, mean FFmpeg PSNR 23.705 dB.- 2026-06-08 reuse/recompute summary fix: found that zeus_reuse_count and zeus_recompute_count in experiment summaries were summing branch-level states across high/low and cond/uncond, which doubled the intended timestep-level counts. Updated both ZEUS timestep and ZEUS-threshold summarizers so the existing count columns report unique timestep counts from skipping_path/recompute_path, while new branch-call columns preserve summed cond/uncond model-call counts. Regenerated the completed formal ZEUS summary; prompt-level counts are now 25 reuse / 25 recompute timesteps, with 50 / 50 branch calls retained. The pre-fix CSV was backed up as summary.branch_count_before_fix.csv.
+- Result root: `/hy-tmp/wan22_cache_ablation_prompt01_50step_45f_480p_20260609_184625`
+- Baseline compute time: `522.603s`
+- `timestep_only`: `1.600x`, PSNR `18.606 dB`
+- `block_only`: `1.362x`, PSNR `19.396 dB`
+- `cfg_only`: `1.148x`, PSNR `21.571 dB`
+- `timestep_block`: `1.748x`, PSNR `18.159 dB`
+- `timestep_cfg`: `1.332x`, PSNR `20.910 dB`
+- `block_cfg`: `1.352x`, PSNR `19.446 dB`
+- `all_three`: `1.370x`, PSNR `19.603 dB`
 
-- 2026-06-08 ZEUS-threshold alignment check: reviewed threshold experiment scripts, summarizer, PSNR helper, CLI wiring, wan/text2video.py, and wan/timestep_cache.py before running threshold experiments. Confirmed threshold settings are aligned with the completed formal ZEUS run for model, checkpoint, prompt set, fixed seed 42, 832x480 shape, 45 frames, 50 steps, dpm++ solver, offload/convert dtype flags, disabled block/CFG cache, compute-only timing, FFmpeg PSNR, ffprobe validation, and corrected unique timestep reuse/recompute summary counts. The intentional difference is that zeus-threshold replaces fixed ZEUS denominator/modular/lagrange skip cadence with latent relative-L1 threshold decisions while preserving (model_stage, branch) cache state separation. bash -n and conda py_compile validation passed; prompt parser returned 10 prompts.
+SeaCache prompt-01:
 
-- 2026-06-08 ZEUS-threshold prompt 01 pilot launched: updated the threshold experiment script to support PROMPT_LIMIT and EXPECTED_THRESHOLD_COUNT while preserving formal defaults. Started tmux session zeus_threshold_p01_162827 with result root /hy-tmp/wan22_zeus_threshold_prompt01_7th_20260608_162827 and workspace symlink experiment_results/wan22_zeus_threshold_prompt01_7th_20260608_162827. The pilot uses prompt 01 only, fixed seed 42, thresholds 0.001 0.005 0.02 0.08 0.20 0.60 1.50, and the same model/shape/steps/solver/offload/PSNR/timing settings as the formal ZEUS run. Initial tmux check showed baseline prompt 01 running and loading T5 weights.
+- Result root: `/hy-tmp/wan22_seacache_50step_45f_480p_20260611_191733`
+- Threshold `0.10`: `1.112x`, PSNR `36.303 dB`
+- Threshold `0.20`: `1.569x`, PSNR `24.558 dB`
+- Threshold `0.30`: `1.966x`, PSNR `20.562 dB`
+- Threshold `0.50`: `2.779x`, PSNR `19.460 dB`
 
+SeaCache prompt-02 dense/high-threshold sweeps:
 
-- 2026-06-08 ZEUS-threshold prompt 01 progress/restart: at 17:23 CST the original pilot tmux session was no longer running. Baseline prompt 01 completed successfully with video, ffprobe JSON, raw log, command script, and compute elapsed 522.603s, but no threshold runs had started and no failed records were written. Added RESUME_EXISTING support to the threshold experiment script, validated with bash -n, and restarted tmux session zeus_threshold_p01_resume_1724 using the same result root /hy-tmp/wan22_zeus_threshold_prompt01_7th_20260608_162827. The restart skipped the completed baseline and began zeus-threshold 0.001 for prompt 01.
+- Dense root: `/hy-tmp/wan22_seacache_prompt02_dense_20260611_204826`
+- High-threshold root: `/hy-tmp/wan22_seacache_prompt02_highthr_20260612_000218`
+- Threshold `0.10`: `1.090x`, PSNR `45.532 dB`
+- Threshold `0.20`: `1.562x`, PSNR `30.097 dB`
+- Threshold `0.30`: `1.965x`, PSNR `29.582 dB`
+- Threshold `0.50`: `2.641x`, PSNR `23.725 dB`
+- Threshold `0.60`: `3.098x`, PSNR `20.262 dB`
+- Threshold `0.80`: `3.499x`, PSNR `18.631 dB`
+- Takeaway from prompt 01 and 02: SeaCache dominated ZEUS-threshold on the observed quality/speed frontier, especially on prompt 02.
 
+OpenVid SeaCache local shard:
 
-- 2026-06-08 ZEUS-threshold ffprobe fix/resume: at 17:59 CST tmux had exited again after completing threshold 0.001 generation. Root cause was plain ffprobe not being present in tmux PATH; under set -e this left 0-byte ffprobe JSON files and no failed record. Updated the threshold experiment script to use FFPROBE_BIN defaulting to /hy-tmp/miniconda3/envs/Wan2.2/bin/ffprobe, and tightened resume checks to require nonempty metadata/PSNR files. Regenerated baseline and 0.001 ffprobe JSON, computed 0.001 PSNR (all 45 frames perfect/Infinity because no reuse occurred), and restarted tmux session zeus_threshold_p01_resume2_1800. The new session skipped baseline and 0.001 and started threshold 0.005.
+- Current local assignment: OpenVid prompts 76-100, zero-based `prompt_start=75`, `prompt_limit=25`.
+- Thresholds: `0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.60 0.70 0.80`.
+- Result root launched previously: `/hy-tmp/wan22_seacache_openvid100_50step_45f_480p_20260612_002814`
+- Workspace symlink: `experiment_results/wan22_seacache_openvid100_50step_45f_480p_20260612_002814`
+- At the last historical check, tmux was active and no failure files existed. Current check now shows no tmux server; this run should be inspected before assuming completion.
 
+## Reports
 
-- 2026-06-08 ZEUS-threshold single-process batch runner: added experiments/zeus_threshold_50step_45f_480p/run_batch.py. The runner loads one WanT2V pipeline per process and sequentially runs baseline/threshold jobs across selected prompts, avoiding repeated checkpoint shard loading for every threshold. It keeps the existing archive layout and summarizer compatibility, including videos, command records, per-run logs, compute-only timing files, ffprobe JSON, PSNR JSON/logs, failure records, summary.csv, and aggregate_by_threshold outputs. It supports prompt_start, prompt_limit, thresholds, resume_existing, explicit ffprobe_bin, fixed seed 42, and the same T2V/threshold settings. conda py_compile and --help validation passed; no generation smoke was launched because the existing shell pilot was already running the final threshold.
+Important report files are under `reports/`:
 
+- `reports/report.md`
+- `reports/report_main_experiments.md`
+- `reports/report_supplementary_experiments.md`
+- `reports/report_seacache_vs_zeus_threshold_prompt12.md`
 
-- 2026-06-08 timestep-aware interp option: added a threshold-only ZEUS-threshold caching mode named timestep_aware_interp without changing existing ZEUS/reuse_interp/interp_all/reuse_all behavior. The new mode records recent true recompute step indices and, on skip, uses scale = (current_step - last_recompute_step) / (last_recompute_step - previous_recompute_step) to return last + (last - previous) * scale. Exposed the mode through generate.py and the single-process batch runner; the shell script can use it via ZEUS_CACHING_MODE=timestep_aware_interp. Validation passed with conda py_compile, generate.py --help, run_batch.py --help, and a CPU dummy test where step1=10 and step4=40 produce step5=50 for timestep_aware_interp while unchanged reuse_interp produces 70.
+The main report covers fixed ZEUS, ZEUS-threshold reuse_interp, and the three-cache grid. The supplementary report covers smoke tests, pilots, block-cache-only comparisons, ablations, and failed/superseded runs.
 
+## Known Issues And Lessons
 
-- 2026-06-08 ZEUS-threshold prompt 01 pilot completed: shell-based seven-threshold run finished with no tmux sessions and no failed records. Result root /hy-tmp/wan22_zeus_threshold_prompt01_7th_20260608_162827 contains completed baseline and threshold videos, command records, logs, timing files, ffprobe JSON, PSNR outputs, summary.csv, and aggregate_by_threshold outputs. This run used original reuse_interp, not the newly added timestep_aware_interp. Baseline compute time was 522.603s. Threshold results: 0.001 speedup 0.9998x, PSNR Infinity, reuse/recompute 0/50; 0.005 speedup 1.1112x, PSNR 26.954 dB, reuse/recompute 5/45; 0.02 speedup 1.6068x, PSNR 18.606 dB, reuse/recompute 19/31; 0.08 speedup 2.2512x, PSNR 18.873 dB, reuse/recompute 28/22; 0.20 speedup 2.5988x, PSNR 18.900 dB, reuse/recompute 31/19; 0.60 speedup 2.7344x, PSNR 18.928 dB, reuse/recompute 32/18; 1.50 speedup 2.7313x, PSNR 18.928 dB, reuse/recompute 32/18. Main takeaway: 0.005 is the only high-PSNR point but gives modest speedup, while 0.02+ drops to roughly 18.6-18.9 dB and reuse saturates around 32/50 timesteps by threshold 0.60.
+- Compute speedup should use `inference_compute_elapsed_seconds`, not full process wall time.
+- FFmpeg/ffprobe should use the conda env path when tmux PATH is uncertain.
+- True no-offload is not appropriate on this single A100 80GB setup without model-parallel changes; high and low DiT checkpoints plus T5 and activations are too large.
+- BWCache originally had OOM risk because high-stage block state survived into low stage; block cache stage clearing and summary archiving were added.
+- `cfg_force_uncond_recompute_on_miss` exists for explicit comparison, but current threshold-combination runs should normally leave it disabled.
+- Reuse/recompute summaries should distinguish unique timestep counts from summed branch-call counts.
+- OpenVid prompts are longer and more caption-like than the original 10 prompts; use stable `sample_id` filenames for dataset rows.
 
+## Next Recommended Work
 
-- 2026-06-08 timestep-aware prompt 01 batch comparison launched: prepared result root /hy-tmp/wan22_zeus_threshold_taware_prompt01_5th_20260608_191714 with copied baseline prompt 01 artifacts from the completed reuse_interp pilot, created workspace symlink experiment_results/wan22_zeus_threshold_taware_prompt01_5th_20260608_191714, and started tmux session zeus_taware_p01_191714. The single-process batch runner uses zeus_caching_mode=timestep_aware_interp, prompt_limit=1, resume_existing=True, and thresholds 0.005 0.02 0.08 0.20 0.60, intentionally dropping uninformative 0.001 and 1.50. Initial pane confirmed one-time WanT2V pipeline initialization.
+1. Inspect `/hy-tmp/wan22_seacache_openvid100_50step_45f_480p_20260612_002814` to determine whether the local OpenVid prompts 76-100 run completed after the old log ended.
+2. Build or update a consolidated threshold dataset table from completed result roots under `/hy-tmp/wan22_*` and `experiment_results/`.
+3. Use the consolidated table to define the first adaptive-threshold predictor baseline.
+4. Keep future progress entries concise and append-only from this reset point.
 
+## 2026-06-13 Documentation Cleanup
 
-- 2026-06-08 timestep-aware partial comparison: while tmux session zeus_taware_p01_191714 was still running threshold 0.60, compared completed prompt 01 timestep_aware_interp thresholds 0.005/0.02/0.08/0.20 against the previous reuse_interp pilot. Reuse/recompute timestep counts matched reuse_interp for each completed threshold, so differences come from reconstruction strategy. 0.005 improved PSNR from 26.954 to 28.196 dB with essentially unchanged 1.11x speedup and 5/45 reuse/recompute. 0.02 decreased from 18.606 to 18.075 dB with 1.618x speedup and 19/31 reuse/recompute. 0.08 decreased from 18.873 to 17.782 dB with 2.263x speedup and 28/22 reuse/recompute. 0.20 decreased from 18.900 to 17.666 dB with 2.620x speedup and 31/19 reuse/recompute. Interim takeaway: timestep_aware_interp helps conservative 0.005 but is worse than reuse_interp for more aggressive thresholds on prompt 01.
-
-
-- 2026-06-08 reuse_interp full threshold experiment launched: using the original reuse_interp reconstruction strategy, started tmux session zeus_threshold_full_reuse_195427 with single-process run_batch.py. Result root /hy-tmp/wan22_zeus_threshold_reuse_interp_10prompt_5th_20260608_195427 and workspace symlink experiment_results/wan22_zeus_threshold_reuse_interp_10prompt_5th_20260608_195427. Thresholds are 0.005 0.02 0.08 0.20 0.60, dropping uninformative 0.001 and 1.50. Settings remain fixed seed 42, 10 prompts, t2v-A14B, 832x480, 45 frames, 50 steps, dpm++, offload_model=True, convert_model_dtype, block/cfg cache disabled. Prompt 01 artifacts from the completed reuse_interp pilot were copied into the full result root and the run was launched with resume_existing=True, so prompt 01 should be skipped and generation should continue from prompt 02 after one-time pipeline initialization.
-
-
-## 2026-06-09
-
-- 00:05 CST reuse_interp full threshold progress: tmux session zeus_threshold_full_reuse_195427 is still running with no failed records. Current pane shows prompt 08 baseline completed and threshold 0.005 started. Completed counts are 8/10 baseline videos, 35/50 threshold videos, and 35/50 PSNR JSON files; prompts 01-07 are complete.
-
-- 09:43 CST reuse_interp full threshold experiment completed: tmux finished with no failed records. Result root /hy-tmp/wan22_zeus_threshold_reuse_interp_10prompt_5th_20260608_195427 contains 10 baseline videos, 50 threshold videos, 50 PSNR JSON files, 60 ffprobe JSON files, summary.csv, and aggregate_by_threshold CSV/JSON. Settings were 10 prompts, fixed seed 42, t2v-A14B, 832x480, 45 frames, 50 dpm++ steps, offload_model=True, convert_model_dtype, block/cfg cache disabled, zeus_caching_mode=reuse_interp, thresholds 0.005 0.02 0.08 0.20 0.60. Aggregate results: threshold 0.005 speedup 1.119x, mean PSNR 26.208 dB, reuse/recompute 53/447; 0.02 speedup 1.576x, mean PSNR 20.955 dB, reuse/recompute 183/317; 0.08 speedup 2.259x, mean PSNR 20.932 dB, reuse/recompute 280/220; 0.20 speedup 2.614x, mean PSNR 20.985 dB, reuse/recompute 310/190; 0.60 speedup 2.754x, mean PSNR 21.020 dB, reuse/recompute 320/180. Main takeaway: 0.005 preserves quality best but only gives modest speedup, while 0.08-0.60 cluster around 21 dB and trade higher speed for lower quality.
-
-
-- 2026-06-09 BWCache block cache initial implementation: ported the official BWCache scheduling semantics into native Wan T2V. Added `wan/block_cache.py` with BWCache config/state/summary, wired `--block_cache bwcache` plus `--bwcache_thresh`, `--bwcache_reuse_interval`, and `--bwcache_last_step`, and integrated block cache into `WanModel.forward` as transformer-block residual reuse with official-style `cal_list`, `previous_residual`, average per-block relative-L1 trigger, reuse pattern, and tail recompute handling.
-- Block cache composition follows the project cache ordering: `WanT2V.generate()` still evaluates timestep cache around whole cond/uncond model calls; only timestep-cache misses call the model and therefore enter BWCache. BWCache state keys are explicit `(model_stage, branch)` pairs, preserving separate high/low and cond/uncond states and avoiding call-count parity assumptions.
-- BWCache validation: conda `py_compile` passed for `generate.py`, `wan/text2video.py`, `wan/modules/model.py`, and `wan/block_cache.py`; `generate.py --help` exposes the new block cache CLI; a small CPU schedule check verified the official reuse pattern and summary fields. No full GPU generation/PSNR run was launched in this session.
-- 2026-06-09 CFG cache initial implementation: added `wan/cfg_cache.py` with `CFGCacheConfig`, per-stage CFG cache state, relative-L1 comparison against the last full CFG conditional prediction, cached `cond - uncond` delta reuse, middle-window gating, max reuse streak, and structured summary logging.
-- Wired native T2V CFG cache as the outer branch-selection logic in `WanT2V.generate()`: each denoising step computes `cond` first, CFG hits skip only the `uncond` branch and reconstruct `cond + (scale - 1) * cached_delta`, while CFG misses run `uncond` and refresh the cached delta/last-full cond. Actual cond/uncond branches still go through timestep cache first and then block cache only on timestep misses, preserving the existing standalone cache behavior.
-- Added CLI support for `--cfg_cache threshold` plus `--cfg_start`, `--cfg_end`, `--cfg_threshold`, `--cfg_max_reuse`, and `--cfg_eps`. Validation passed with conda and system `py_compile`, `generate.py --help`, and a CPU CFG cache logic check covering recompute, reuse, max-reuse forcing, per-stage state separation, and summary fields. No full GPU generation/PSNR run was launched in this session.
-
-
-- 2026-06-09 CFG miss force-uncond-refresh switch: added `--cfg_force_uncond_recompute_on_miss`. When enabled and CFG cache misses, the uncond branch forces timestep cache recompute and passes a force flag through `WanModel.forward` so BWCache also recomputes transformer blocks instead of reusing stale residuals; both caches still record/update their recompute state. Default behavior remains unchanged.
-- Validation for the force-uncond-refresh switch: conda `py_compile` passed for `generate.py`, `wan/text2video.py`, `wan/modules/model.py`, `wan/timestep_cache.py`, and `wan/cfg_cache.py`; `generate.py --help` exposes the new flag; a CPU ZEUS timestep-cache check verified normal skip vs forced recompute paths and recompute_path updates. No full GPU generation/PSNR run was launched.
-
-
-- 2026-06-09 block-group cache implementation: added a separate `block-group` block cache option without changing the existing `bwcache` implementation. New `wan/block_group_cache.py` stores per `(model_stage, branch)` group states, with default 5 transformer blocks per group, threshold-based relative-L1 reuse, pooled/full feature metric options, max reuse streak, progress window, cached group residuals, and structured per-group summaries.
-- Wired `--block_cache block-group` plus `--block_group_size`, `--block_group_threshold`, `--block_group_metric`, `--block_group_start`, `--block_group_end`, `--block_group_max_reuse`, and `--block_group_eps`. `WanModel.forward()` now has an independent block-group path that splits 40 T2V-A14B blocks into 8 groups by default, reuses `x + cached_group_residual` on hits, recomputes all blocks in a group on misses, and honors CFG miss force-recompute by refreshing all groups in the uncond branch. Existing `--block_cache bwcache` remains on its original path.
-- Block-group validation: conda `py_compile` passed for `generate.py`, `wan/text2video.py`, `wan/modules/model.py`, `wan/block_group_cache.py`, `wan/block_cache.py`, `wan/timestep_cache.py`, and `wan/cfg_cache.py`; `generate.py --help` exposes the new block-group CLI; a CPU logic check verified threshold hit/miss behavior and summary fields. No full GPU generation/PSNR run was launched.
-
-
-- 2026-06-09 block-cache-only comparison experiment scripts: added `experiments/block_cache_only_50step_45f_480p/` for a one-prompt, block-cache-only comparison of the existing `bwcache` path and the new `block-group` path. Defaults are prompt 01, seed 42, T2V-A14B, 832x480, 45 frames, 50 dpm++ steps, timestep cache disabled, CFG cache disabled, baseline no-cache, BWCache thresholds `0.05 0.15 0.30`, and block-group thresholds `0.01 0.03 0.05` with group size 5 and pooled relative-L1 metric.
-- The block-cache-only runner archives baseline and candidate videos, full command records, raw logs, compute-only timing files, ffprobe JSON, FFmpeg PSNR JSON/logs vs baseline, threshold env files, failure records, summary CSV, aggregate-by-method-threshold CSV/JSON, and a workspace symlink under `experiment_results/`. The summarizer parses both `BWCache block cache summary` and nested `Block-group cache summary` formats.
-- Validation for block-cache-only experiment scripts: `bash -n` passed for `run_experiments.sh`; conda `py_compile` passed for `summarize_results.py` and reused PSNR/prompt helpers; prompt parser returned prompt 01. No full GPU experiment was launched in this session.
-
-
-- 2026-06-09 block-cache-only prompt 01 experiment launched: committed current implementation/scripts at git commit `42ee328` (`Add CFG and block cache experiment support`), then prepared result root `/hy-tmp/wan22_block_cache_only_50step_45f_480p_20260609_125436` by copying prompt 01 baseline video, command, raw log, compute time, and ffprobe JSON from `/hy-tmp/wan22_zeus_threshold_reuse_interp_10prompt_5th_20260608_195427`. Started tmux session `block_cache_only_p01_125436` with `RESUME_EXISTING=True`; pane confirmed the baseline was skipped and the first candidate `bwcache_th_0p05` started. Settings are block cache only, timestep/cfg cache disabled, BWCache thresholds `0.05 0.15 0.30`, block-group thresholds `0.01 0.03 0.05`, group size 5, pooled relative-L1, prompt 01, seed 42, 832x480, 45 frames, 50 dpm++ steps.
-
-
-- 2026-06-09 block-cache-only OOM diagnosis/fix: the launched run failed on `bwcache_th_0p05` at sampling step 32 with CUDA OOM. Root cause was block-cache state from the completed high-noise stage remaining on GPU after the schedule switched to the low-noise model; those high-stage states are never used again in the monotonic denoising schedule. Added safe `clear_stage(stage)` methods to BWCache and block-group cache and wired `WanT2V.generate()` to clear completed block-cache stage state on high/low stage switch. Validation passed with conda `py_compile` and a CPU `clear_stage` state check.
-
-
-- 2026-06-09 block-cache-only retry launched after OOM fix: archived the failed `bwcache_th_0p05` attempt under `/hy-tmp/wan22_block_cache_only_50step_45f_480p_20260609_125436/failed_history/`, removed the active failed marker/time/log for resume, and restarted the experiment in tmux session `block_cache_only_p01_retry_1318` with the same result root and `RESUME_EXISTING=True`. Initial pane confirmed baseline was skipped again and `bwcache_th_0p05` restarted using the stage-clear fix commit `689f67b`.
-
-
-- 2026-06-09 block-cache OOM follow-up: confirmed block cache stores only the previous cache tensors per block/group, not all historical steps, but BWCache stores full per-block `last_x_m` tensors for each active `(stage, branch)`. Improved the stage-switch memory fix by moving completed-stage block-cache clearing before `_prepare_model_for_timestep()` to reduce high->low transfer peak memory. Also changed BWCache and block-group `clear_stage()` to archive summary metadata before freeing tensors so final result tables retain high-stage reuse/recompute traces after memory cleanup. Validation passed with conda `py_compile` and CPU archive-summary checks.
-
-
-- 2026-06-09 block-cache-only retry2 launched: stopped the previous retry session because it was started before the summary-archive/early-stage-clear fix. Archived its partial log/time under `failed_history/` and restarted the same experiment root in tmux session `block_cache_only_p01_retry2_1330` using commit `4ad3615`. Initial pane confirmed baseline was skipped and `bwcache_th_0p05` restarted again.
-
-
-- 2026-06-09 BWCache pooled feature update: changed BWCache feature storage to support `pooled_rel_l1` vs `full_rel_l1` metrics, defaulting to `pooled_rel_l1` so BWCache stores token-pooled per-block features instead of full `[B, L, C]` features. Added CLI `--bwcache_metric` and updated the block-cache-only experiment runner/README to record and pass `BWCACHE_METRIC=pooled_rel_l1`. This aligns BWCache feature memory behavior with the block-group cache design while preserving `full_rel_l1` as an opt-in mode. Validation passed with conda `py_compile`, `generate.py --help`, and `bash -n` for the runner.
-
-
-- 2026-06-09 block-cache-only pooled BWCache retry launched: archived the in-flight pre-pooling retry log under `/hy-tmp/wan22_block_cache_only_50step_45f_480p_20260609_125436/failed_history/bwcache_th_0p05_prompt_01.interrupted_before_bwcache_pool_20260609_133049.log`, then restarted the same result root with `RESUME_EXISTING=True` in tmux session `block_cache_only_p01_retry3_1340` after commit `2dfe64e` (`Pool BWCache block features by default`). The pane and archived env files confirm `bwcache_metric=pooled_rel_l1`; baseline prompt 01 was skipped and `bwcache_th_0p05` restarted with timestep/CFG caches disabled.
-
-
-- 2026-06-09 block-group experiment parameter fix: changed the block-cache-only experiment script defaults so block-group cache uses explicit first/last segment protection with `BLOCK_GROUP_START=0.1` and `BLOCK_GROUP_END=0.9`, while keeping `BLOCK_GROUP_MAX_REUSE=3`. Updated the experiment README and validated the runner with `bash -n`.
-- 2026-06-09 block-cache-only restart after block-group window fix: stopped the old tmux retry, archived partial `bwcache_th_0p15` logs under `failed_history/`, and restarted the same result root in tmux session `block_cache_only_p01_retry5_windowed` with `RESUME_EXISTING=True`. The new script-level env confirms `block_group_start=0.1`, `block_group_end=0.9`, and `block_group_max_reuse=3`. Completed results before the restart: baseline prompt 01 and `bwcache_th_0p05` prompt 01 are fully archived with videos, ffprobe, timing, and PSNR. Baseline compute time is `522.603s`; `bwcache_th_0p05` compute time is `507.238s` (`1.030x` speedup), FFmpeg mean PSNR is `28.895 dB`, and video metadata matches `832x480`, `45` frames, `16 fps`, duration `2.812500s`.
-- 2026-06-09 experiment workflow rule update: confirmed `AGENTS.md` did not explicitly require single-process batch runners for multi-candidate experiments. Added a requirement that experiments with multiple prompts/cache methods/thresholds should prefer one WanT2V pipeline load per process and run candidates sequentially in-process to avoid repeated checkpoint shard loading; per-candidate process launches are now documented as exceptions requiring justification.
-
-
-- 2026-06-09 block-cache-only prompt 01 experiment completed: tmux session `block_cache_only_p01_retry5_windowed` finished and no active failed records are present. Result root `/hy-tmp/wan22_block_cache_only_50step_45f_480p_20260609_125436` contains baseline plus all 6 candidate videos, command scripts, raw logs, timing files, ffprobe JSON, PSNR JSON/logs, `results/summary.csv`, and `results/aggregate_by_method_threshold.csv/json`. All videos validate as `832x480`, `45` frames, `16 fps`, duration `2.812500s`. Baseline compute time is `522.603s`. Aggregate results: BWCache `0.05` speedup `1.030x`, PSNR `28.895 dB`, reuse/recompute `4/96`; BWCache `0.15` speedup `1.597x`, PSNR `18.370 dB`, reuse/recompute `41/59`; BWCache `0.30` speedup `1.232x`, PSNR `16.824 dB`, reuse/recompute `21/79`; block-group `0.01` speedup `0.982x`, PSNR `Infinity` with no reuse (`0/800` group-calls); block-group `0.03` speedup `1.361x`, PSNR `19.396 dB`, reuse/recompute `244/556`; block-group `0.05` speedup `1.713x`, PSNR `19.491 dB`, reuse/recompute `374/426`. Block-group env files confirm `start=0.1`, `end=0.9`, `max_reuse=3`, `metric=pooled_rel_l1`.
-
-
-- 2026-06-09 BWCache 0.30 trace diagnosis/fix/rerun: investigated the anomalous initial BWCache `0.30` result where speedup was lower than `0.15`. Trace showed high/cond triggered schedule update at step `1`, but `tail_len=int(step_index * last_step)` became `0`, and Python slice `new_cal_list[-0:] = 1` overwrote the entire schedule as recompute. Fixed `wan/block_cache.py` so tail forcing runs only when `tail_len > 0`; validation passed with conda `py_compile` and a CPU schedule check showing step-1 trigger now yields reuse indices `[2, 3, 4, 6, 7, 8, ...]`. Archived the invalid old `bwcache_th_0p30` artifacts under `failed_history/*invalid_before_bwcache_taillen_fix*`, reran only BWCache `0.30`, and regenerated summaries. Corrected BWCache `0.30` result: speedup `1.674x`, PSNR `17.632 dB`, reuse/recompute `44/56`; ffprobe remains `832x480`, `45` frames, `16 fps`, duration `2.812500s`. Corrected trace: high/cond update_step `1`, reuse `23`; high/uncond update_step `3`, reuse `21`; low branches still have no reuse because the configured BWCache tail protection covers the remaining low-stage steps after update step `33`.
-- 2026-06-09 block-cache comparison takeaway: on prompt 01, block-group is the better current block-cache direction for speed/quality tradeoff. `block-group 0.05` dominates the aggressive BWCache points with speedup `1.713x` and PSNR `19.491 dB`; corrected `BWCache 0.30` gives `1.674x` but only `17.632 dB`, while `BWCache 0.15` gives `1.597x` and `18.370 dB`. `BWCache 0.05` remains the only high-quality point at `28.895 dB`, but speedup is only `1.030x`. `block-group 0.01` performs no reuse and is slower than baseline. Reuse/recompute counts are not directly comparable across BWCache and block-group because BWCache counts branch-level calls while block-group counts per-group calls; speedup and PSNR are the meaningful comparison axes.
-- 2026-06-09 cache guard audit: checked timestep, CFG, BWCache, and block-group cache guard logic. Timestep cache already has `acc_range` first/last protection and `max_interval`; CFG cache already has `cfg_start/cfg_end` and `cfg_max_reuse`; block-group already has `block_group_start/block_group_end` and `block_group_max_reuse`. BWCache had tail protection via `last_step` and max consecutive reuse via `reuse_interval`, but lacked an explicit start/end denoising window.
-- Added BWCache explicit progress-window protection with `--bwcache_start` and `--bwcache_end`, defaulting to `0.0` and `1.0` to preserve existing default behavior. BWCache schedule generation now forces recompute before `start` and after `end` in addition to its existing tail protection and reuse-interval pattern. Validation passed with conda/system `py_compile`, `generate.py --help`, and a CPU BWCache schedule check confirming protected prefix/suffix steps remain recompute.
-- 2026-06-09 three-cache merge prompt 01 trial: ran one prompt with all three caches enabled to check combined behavior and OOM risk. Result root `/hy-tmp/wan22_merge_three_cache_prompt01_20260609_153438`, workspace symlink `experiment_results/wan22_merge_three_cache_prompt01_20260609_153438`. Settings: prompt 01, seed 42, T2V-A14B, `832*480`, 45 frames, 50 dpm++ steps, `offload_model=True`, `convert_model_dtype`, timestep `zeus-threshold` at threshold `0.02`, block cache `block-group` at threshold `0.03` with group size 5, start/end `0.1/0.9`, max reuse 3, CFG cache threshold `0.03` with start/end `0.1/0.9`, max reuse 3, and `--cfg_force_uncond_recompute_on_miss`.
-- Merge trial completed without OOM. Peak observed GPU memory during sampling was about `50.7GB` on A100 80GB; high->low block-cache stage clearing occurred successfully. Candidate ffprobe validated `832x480`, `45` frames, `16 fps`, duration `2.812500s`. Compute-only time was `357.403s` vs reused baseline prompt 01 compute time `522.603s`, speedup `1.462x`. FFmpeg mean PSNR vs baseline was `18.001 dB` over 45 frames.
-- Merge trial cache activity: timestep cache reused 19 branch calls and recomputed 70 branch calls; block-group reused 26 group calls and recomputed 534 group calls; CFG cache reused 11 steps and recomputed 39 steps. All three caches activated, and CFG skipped uncond on reuse steps while CFG misses forced uncond recompute as configured. Quality is low, so this parameter set is useful as a behavior/OOM smoke, not a recommended final quality setting.
-- 2026-06-09 CFG cache follow-up after merge-trial analysis: changed CFG miss force-refresh semantics so `--cfg_force_uncond_recompute_on_miss` now forces a full CFG refresh, recomputing both `cond` and `uncond` branches while bypassing timestep/block reuse before refreshing the cached CFG delta. This avoids refreshing `cached_delta` from an approximate cond prediction when timestep/block cache has already reused the cond branch.
-- Added selectable CFG reuse metric `--cfg_metric`, defaulting to `timestep_modulated_input_rel_l1`. The previous conditional-output criterion remains available as `cond_output_rel_l1` for comparisons, and the previous `timestep_modulated_latent_rel_l1` name is kept as a compatibility alias. The new default compares model-internal timestep-modulated input features produced from patch embedding plus the first block's time-modulated norm feature, reducing the chance that CFG reuse decisions are made from already-approximated cond model outputs. Validation passed with conda/system `py_compile`, `generate.py --help`, and a CPU small-model check for the internal CFG feature path.
-- 2026-06-09 three-cache internal-metric rerun: reran prompt 01 with the same merge parameters as `/hy-tmp/wan22_merge_three_cache_prompt01_20260609_153438`, but using the new model-internal CFG metric `timestep_modulated_input_rel_l1` and full CFG refresh on misses. Result root `/hy-tmp/wan22_merge_three_cache_internal_metric_prompt01_20260609_162556`, workspace symlink `experiment_results/wan22_merge_three_cache_internal_metric_prompt01_20260609_162556`. Run completed without OOM; peak observed GPU memory remained about `50.7GB`, and video ffprobe validated `832x480`, 45 frames, 16 fps, duration `2.812500s`.
-- Internal-metric rerun results: compute-only time `492.713s`, speedup `1.061x` vs baseline `522.603s`, FFmpeg mean PSNR `19.623 dB` over 45 frames. Compared with the previous merge trial (`357.403s`, `1.462x`, `18.001 dB`), PSNR improved by `+1.621 dB` but compute time increased by `+135.310s`. Cache activity: timestep reuse/recompute branch calls `24/92`, block-group reuse/recompute group calls `26/710`, CFG reuse/recompute steps `17/33`. Interpretation: the internal CFG metric plus full refresh improves quality somewhat and remains memory-stable, but the full-refresh policy largely removes the useful speedup.
-- 2026-06-09 CFG full-refresh scheduling optimization: found that after switching to input-feature CFG metrics, the implementation still computed `cond` before CFG hit/miss, then recomputed `cond` on CFG miss when full refresh was enabled. Reordered the non-`cond_output_rel_l1` CFG path so it computes the model-internal CFG metric feature first, decides hit/miss, then runs `cond` only once on hits and runs forced `cond`/`uncond` exactly once each on misses. The old `cond_output_rel_l1` path still computes `cond` before the CFG decision because that metric requires cond output. Validation passed with conda/system `py_compile` and CPU CFG metric checks. No GPU rerun was launched after this scheduling optimization yet.
-- 2026-06-09 optimized-schedule rerun: reran prompt 01 with the same merge parameters after the CFG scheduling optimization. Result root `/hy-tmp/wan22_merge_three_cache_optimized_schedule_prompt01_20260609_164735`, workspace symlink `experiment_results/wan22_merge_three_cache_optimized_schedule_prompt01_20260609_164735`. Run completed without OOM; peak observed GPU memory remained about `50.7GB`, and ffprobe validated `832x480`, 45 frames, 16 fps, duration `2.812500s`.
-- Optimized-schedule results: compute-only time `381.459s`, speedup `1.370x` vs baseline `522.603s`, FFmpeg mean PSNR `19.603 dB`. Compared with the unoptimized internal-metric rerun (`492.713s`, `1.061x`, `19.623 dB`), compute improved by `111.254s` with only `-0.019 dB` PSNR change. Compared with the first merge trial (`357.403s`, `1.462x`, `18.001 dB`), this keeps most of the speed while improving PSNR by `+1.602 dB`. Cache activity: timestep reuse/recompute branch calls `12/71`, block-group reuse/recompute group calls `26/542`, CFG reuse/recompute steps `17/33`.
-## Notes
-
-- Follow `AGENTS.md` workflow: read this file at session start, update it before session end, and keep concise session logs under `logs/`.
-- Experiment outputs, model weights, caches, logs, and result tables should stay under `/hy-tmp`.
-
-## 2026-06-09
-
-- Started a single-process cache ablation run for prompt 01 with one shared WanT2V pipeline and seven candidates: timestep only, block only, CFG only, timestep+block, timestep+CFG, block+CFG, and all three caches together.
-- Launch script: `experiments/cache_ablation_prompt01_50step_45f_480p/run_tmux.sh`.
-- Runner: `experiments/cache_ablation_prompt01_50step_45f_480p/run_ablation.py`.
-- tmux session: `cache_ablation_p01_20260609_184625`.
-- Result root: `/hy-tmp/wan22_cache_ablation_prompt01_50step_45f_480p_20260609_184625`.
-- Verified the session started, loaded the shared pipeline, and entered model loading for the first candidate.
-
-## 2026-06-10
-
-- Read the repository state, recent agent logs, and the latest cache ablation experiment results. Current working tree remains dirty with cache implementation changes, the ablation runner, recent logs, and result symlinks; no code changes were made in this review pass.
-- The single-process prompt 01 cache ablation run `cache_ablation_p01_20260609_184625` has completed; no tmux server is running and `/hy-tmp/wan22_cache_ablation_prompt01_50step_45f_480p_20260609_184625/failed` is empty.
-- The ablation result root contains all 7 candidate videos, command/config records, raw logs, compute-only timing files, ffprobe JSON, FFmpeg PSNR JSON/logs, `results/summary.csv`, and `results/aggregate.json`. All candidate videos validate as `832x480`, `45` frames, `16 fps`, duration `2.812500s`.
-- Ablation baseline compute time is `522.603s`. Candidate results on prompt 01: `timestep_only` `326.641s`, `1.600x`, PSNR `18.606 dB`; `block_only` `383.713s`, `1.362x`, PSNR `19.396 dB`; `cfg_only` `455.366s`, `1.148x`, PSNR `21.571 dB`; `timestep_block` `298.889s`, `1.748x`, PSNR `18.159 dB`; `timestep_cfg` `392.466s`, `1.332x`, PSNR `20.910 dB`; `block_cfg` `386.542s`, `1.352x`, PSNR `19.446 dB`; `all_three` `381.343s`, `1.370x`, PSNR `19.603 dB`.
-- Ablation interpretation: CFG cache alone is the highest-quality accelerated point among the tested candidates, while timestep cache at threshold `0.02` is the main source of the low-PSNR behavior. Adding CFG to timestep improves PSNR from `18.606` to `20.910 dB` but reduces speedup from `1.600x` to `1.332x`. Adding block-group to timestep gives the fastest tested point (`1.748x`) but the lowest PSNR (`18.159 dB`). The all-three result reproduces the prior optimized-schedule three-cache run (`~1.370x`, `~19.603 dB`).
-- Clarified the `timestep_only` ablation comparison: it is `zeus-threshold` at threshold `0.02`, not the fixed-cadence `--timestep_cache zeus` formal ZEUS run. It matches the earlier `zeus-threshold th_0p02 prompt_01` result exactly in PSNR (`18.606 dB`) and nearly in speed (`326.641s` vs `325.253s`), while the fixed ZEUS prompt 01 result remains `263.628s`, `1.983x`, `22.226 dB`.
-- Disabled CFG miss forced full-refresh in the current ablation/three-cache config template by changing `experiments/cache_ablation_prompt01_50step_45f_480p/run_ablation.py` so `CFGCacheConfig.force_uncond_recompute_on_miss=False` and archived candidate configs record `"force_uncond_recompute_on_miss": false`. The CLI flag `--cfg_force_uncond_recompute_on_miss` still exists for explicit comparison runs, but current planned threshold-combination runs should omit it.
-- Validation after disabling CFG miss force refresh: `/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m py_compile experiments/cache_ablation_prompt01_50step_45f_480p/run_ablation.py generate.py wan/text2video.py wan/cfg_cache.py` passed; `generate.py --help` still exposes CFG cache options; `rg` found no remaining `force_uncond_recompute_on_miss=True` config in `generate.py`, `wan/`, or `experiments/`.
-- Added `experiments/three_cache_threshold_grid_50step_45f_480p/` with a single-process grid runner and tmux launcher for three enabled caches. The runner creates one `WanT2V` pipeline, then sequentially evaluates threshold combinations in-process to avoid repeated checkpoint loading. It archives candidate configs, videos, raw logs, compute-only timing, ffprobe JSON, FFmpeg PSNR JSON/logs, failure records, `results/summary.csv`, and `results/aggregate.json`.
-- Default three-cache threshold grid for prompt 01: timestep `0.001 0.005 0.02 0.60`, block-group `0.001 0.015 0.03 1.00`, CFG `0.001 0.02 0.03 1.00`, for `64` total combinations. Fixed settings are seed `42`, `832*480`, `45` frames, `50` dpm++ steps, `offload_model=True`, `convert_model_dtype`, timestep `zeus-threshold` with `acc_range=(8,47)`, `reuse_interp`, `max_interval=6`, block-group `group_size=5`, `pooled_rel_l1`, start/end `0.1/0.9`, max reuse `3`, CFG metric `timestep_modulated_input_rel_l1`, start/end `0.1/0.9`, max reuse `3`, and CFG miss forced recompute disabled.
-- Validation for the new grid scripts passed: conda `py_compile` for `run_grid.py` and cache/generation modules; `run_grid.py --help`; `bash -n run_tmux.sh`; and a small threshold product check confirmed `64` default combinations.
-- Launched the three-cache threshold grid in tmux session `three_cache_grid_p01_20260610_012518`. Result root: `/hy-tmp/wan22_three_cache_threshold_grid_prompt01_50step_45f_480p_20260610_012518`; workspace symlink: `experiment_results/wan22_three_cache_threshold_grid_prompt01_50step_45f_480p_20260610_012518`. Launch check confirmed GPU idle before start, `/hy-tmp` had about `152G` free, baseline artifacts were copied, `launch.env` and `experiment_config.json` were written, and the tmux pane reached one-time `WanT2V` pipeline initialization for `64` threshold combinations.
-- First three-cache grid candidate completed successfully: `ts_0p001__bg_0p001__cfg_0p001` with all thresholds `0.001`. It produced video, log, config, ffprobe, PSNR output, `results/summary.csv`, and `results/aggregate.json`; no failed records were present. Compute time was `557.073s`, speedup `0.938x` vs baseline `522.603s`, and PSNR was `Infinity` because all 45 frames were perfect and excluded by the FFmpeg PSNR helper. Cache summaries showed zero reuse for timestep, block-group, and CFG, as expected for near-no-use thresholds. The runner continued to candidate `2/64`, `ts_0p001__bg_0p001__cfg_0p02`, without reloading the pipeline.
-- Three-cache threshold grid completed all `64/64` candidates and tmux session `three_cache_grid_p01_20260610_012518` exited. GPU is idle, no failed records were found, and the archive has 64 candidate videos, 64 candidate PSNR JSON files, 64 candidate logs/configs, 64 candidate ffprobe JSON files plus baseline ffprobe, `results/summary.csv`, and `results/aggregate.json`.
-- Three-cache prompt 01 grid headline results: fastest candidate `ts_0p6__bg_1__cfg_1` reached `128.093s`, `4.080x`, PSNR `15.225 dB`; best finite high-PSNR candidate over `25 dB` was `ts_0p005__bg_0p001__cfg_0p001` with `502.999s`, `1.039x`, PSNR `26.954 dB`; best speed with PSNR `>=22 dB` was `ts_0p005__bg_0p015__cfg_0p03` with `434.207s`, `1.204x`, PSNR `23.448 dB`; best speed with PSNR `>=20 dB` was `ts_0p005__bg_0p03__cfg_0p02` with `381.699s`, `1.369x`, PSNR `20.042 dB`.
-- Created `/hy-tmp/work/Wan2.2/report.md` by scanning `/hy-tmp/work/Wan2.2/experiment_results` and selecting completed or otherwise informative experiments with archived configs, videos, ffprobe, PSNR, and summary/aggregate tables. The report records shared generation/evaluation settings, the experiment inventory, formal fixed ZEUS results, ZEUS-threshold sweeps, block-cache-only comparison, three-cache development runs, cache ablation, the completed 64-combination three-cache threshold grid, conclusions, and recommended next experiments.
-- Report headline conclusion: fixed ZEUS cadence remains the strongest validated 10-prompt result (`1.986x / 23.705 dB`), while the best current prompt 01 three-cache follow-up candidates are `timestep=0.005, block=0.015, cfg=0.03` (`1.204x / 23.448 dB`) and `timestep=0.005, block=0.03, cfg=0.02` (`1.369x / 20.042 dB`). The recommended next step is 10-prompt validation of selected three-cache candidates using the single-process runner style to avoid repeated checkpoint loading.
-- Split the report into two focused files: `/hy-tmp/work/Wan2.2/report_main_experiments.md` and `/hy-tmp/work/Wan2.2/report_supplementary_experiments.md`. The main report contains only the three primary experiments requested by the user: fixed ZEUS 10-prompt run, ZEUS-threshold reuse_interp 10-prompt run, and the completed three-cache 64-threshold prompt 01 grid. It fully expands results with at least PSNR, compute time, and speedup for all rows: 10 fixed-ZEUS rows, 50 ZEUS-threshold rows, and 64 grid rows.
-- The supplementary report contains the remaining informative experiments: smoke ZEUS validation, prompt 01 7-threshold pilot, timestep-aware interpolation pilot, block-cache-only comparison, three-cache development reruns, cache ablation, and failed/superseded run notes. The original combined `/hy-tmp/work/Wan2.2/report.md` was left in place.
-
-## 2026-06-11
-
-- Reviewed the public SeaCache project page and cloned `jiwoogit/SeaCache` into `/tmp/seacache_read` for method inspection only.
-- Read the Wan2.1 SeaCache implementation and cross-checked FLUX/HunyuanVideo variants. SeaCache is a training-free timestep/whole-transformer cache method that uses scheduler-aligned spectral filtering of timestep-modulated model input features, accumulates relative-L1 feature changes, and reuses the previous transformer residual when accumulated change remains below a threshold.
-- No repository code or experiment scripts were changed for this reading task beyond this progress note and the session log.
-- Implemented SeaCache as a new timestep cache method without changing existing ZEUS or ZEUS-threshold semantics. CLI usage is `--timestep_cache seacache` with SeaCache-specific arguments `--seacache_threshold`, `--seacache_num_steps`, `--seacache_use_ret_steps`, `--seacache_power_exp`, `--seacache_power_const`, `--seacache_eps`, and `--seacache_norm_mode`.
-- SeaCache integration follows the Wan2.1 implementation by caching transformer-block residuals after patch/time embedding and before head/unpatchify, rather than caching final denoiser outputs. It uses scheduler-aligned SEA frequency filtering over the timestep-modulated first-block input feature, accumulated relative-L1 thresholding, and residual reuse on cache hits.
-- SeaCache state is keyed by `(model_stage, branch)`, so Wan2.2 high/low stage switching uses the same explicit cold-start behavior as the existing timestep cache methods; cond and uncond states are also independent and do not rely on model-call parity.
-- Validation: `/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m py_compile wan/timestep_cache.py wan/modules/model.py wan/text2video.py generate.py` passed, and a CPU by-path state-machine test confirmed same-key residual reuse plus cold start for a new low-stage key. `generate.py --help` and full GPU smoke could not be run in this shell because `nvidia-smi` reports `No devices were found` and importing `wan` triggers `torch.cuda.current_device()`.
-- Added SeaCache experiment scripts under `experiments/seacache_50step_45f_480p/`. The new single-process batch runner loads one WanT2V pipeline and sequentially evaluates selected prompts and SeaCache thresholds, avoiding repeated checkpoint shard loading. It archives baseline artifacts, SeaCache videos, command records, raw logs, compute-only timing files, ffprobe JSON, FFmpeg PSNR JSON/logs, failure records, `results/summary.csv`, and aggregate-by-threshold CSV/JSON.
-- SeaCache experiment defaults mirror `/hy-tmp/work/Wan2.2/experiment_results/wan22_zeus_threshold_reuse_interp_10prompt_5th_20260608_195427`: fixed seed `42`, prompts from `prompt.txt`, `832*480`, 45 frames, 50 dpm++ steps, `offload_model=True`, `convert_model_dtype=True`, block cache disabled, CFG cache disabled, and PSNR vs same prompt/seed no-cache baseline. Default thresholds are now `0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.60 0.70 0.80`. By default the runner reuses the completed reference baseline artifacts; `--generate_baseline`/`GENERATE_BASELINE=True` can regenerate them in the same process if needed.
-- Initial CPU validation for SeaCache experiment scripts passed: conda `py_compile` for `run_batch.py` and `summarize_results.py`; `bash -n run_tmux.sh`; `run_batch.py --cpu_validate` confirmed complete reference baseline video/time/ffprobe artifacts; `run_batch.py --help` works without importing `wan`; a temporary fixture verified the summarizer parses SeaCache cache summaries and writes per-prompt plus aggregate results. No GPU experiment was launched in this step.
-- Adjusted the SeaCache experiment default to a prompt-01 pilot after the user noted the full run was too many candidates. `run_batch.py` and `run_tmux.sh` now default `prompt_limit=1`, so the default run is 1 prompt x 10 thresholds = 10 SeaCache candidate generations. Full 10-prompt validation remains available with `PROMPT_LIMIT=0` or `--prompt_limit 0`. Re-validation passed after the earlier 5-threshold default; re-validation for the current 10-threshold default is recorded below.
-- Read `/hy-tmp/openvid_100_wan22_prompts.zip` and compared its 100 OpenVidHD caption prompts against the original 10 prompts in `prompt.txt`. The OpenVid set is substantially longer and more dataset-caption-like: original 10 average `67.9` words / `416.3` chars / `3.6` sentences, while OpenVid 100 average `112.2` words / `620.4` chars / `6.8` sentences. Original prompts have more explicit camera/motion generation language per sample, while OpenVid prompts are more repetitive caption prose, mostly starting with phrases like `The video features/shows/captures` and include balanced metadata groups (`35` people, `39` landscape, `26` subject; `55` dynamic, `45` calm).
-- Added OpenVid-100 ZEUS-threshold experiment scripts under `experiments/zeus_threshold_openvid100_50step_45f_480p/` for the prompt-threshold-generation-effect dataset task. The default run uses only timestep cache with `zeus-threshold`; block cache and CFG cache are explicitly disabled. Other generation/evaluation settings align with prior threshold experiments: Wan2.2 `t2v-A14B`, `/hy-tmp/models/Wan2.2-T2V-A14B`, fixed seed `42`, `832*480`, `45` frames, `50` dpm++ steps, `offload_model=True`, `convert_model_dtype=True`, `reuse_interp`, `acc_range=(8,47)`, `max_interval=6`, and FFmpeg PSNR vs same prompt/seed no-cache baseline.
-- The OpenVid runner reads `/hy-tmp/openvid_100_wan22_prompts.zip` directly, uses stable `sample_id` filenames like `openvidhd_part1_000.mp4`, and writes selected manifest JSONL/CSV plus a copied source zip into each experiment archive. Default thresholds are `0.001 0.003 0.005 0.008 0.010 0.015 0.020 0.030 0.050 0.080`, giving `100` baseline runs and `1000` ZEUS-threshold candidate rows. The runner loads one WanT2V pipeline per process and sequentially executes all selected baselines/candidates to avoid repeated checkpoint shard loading.
-- OpenVid archive format mirrors earlier experiments: videos, command records with full args and prompts, raw logs, compute-only timing files, ffprobe JSON, PSNR JSON/logs, failure records, `results/summary.csv`, `aggregate_by_threshold.csv/json`, and `aggregate_by_threshold_and_group.csv`. CPU validation passed: conda `py_compile` for runner/summarizer, `bash -n run_tmux.sh`, `run_batch.py --help`, `run_batch.py --cpu_validate` confirmed 100 selected prompts, 10 thresholds, and 1000 expected candidate runs, and a temporary fixture verified the summarizer writes summary and aggregate tables. No GPU experiment was launched in this step.
-- 2026-06-11 SeaCache prompt-01 pilot launched on a GPU-visible A100 80GB instance. Preflight checks passed: `nvidia-smi` showed the GPU idle, `/hy-tmp` had about `152G` free, `run_batch.py --cpu_validate` confirmed prompt 01 reference baseline artifacts are complete, `bash -n run_tmux.sh` passed, and conda `py_compile` passed for the SeaCache runner/summarizer plus cache/generation modules.
-- Started tmux session `seacache_50step_45f_480p_20260611_191733` with result root `/hy-tmp/wan22_seacache_50step_45f_480p_20260611_191733` and workspace symlink `experiment_results/wan22_seacache_50step_45f_480p_20260611_191733`. The run uses the default prompt-01 pilot settings: fixed seed `42`, thresholds `0.05 0.10 0.20 0.30 0.50`, `832*480`, 45 frames, 50 dpm++ steps, `offload_model=True`, `convert_model_dtype=True`, block/CFG caches disabled, and reused baseline artifacts from `/hy-tmp/wan22_zeus_threshold_reuse_interp_10prompt_5th_20260608_195427`.
-- Launch check confirmed the tmux session is active, `launch.env`/`experiment.env`/`gpu.txt`/threshold env files and `logs/pipeline_init.log` were created, and the runner reached one-time WanT2V pipeline initialization with checkpoint shards loading. At the last check there were no failure records; the process was still in initialization/model-loading before the first SeaCache candidate produced video artifacts.
-- 2026-06-11 SeaCache prompt-01 pilot completed. tmux exited, GPU returned idle, and no failed records were found. Result root `/hy-tmp/wan22_seacache_50step_45f_480p_20260611_191733` contains baseline plus 5 SeaCache candidate videos, command records, raw logs, compute-only timing files, ffprobe JSON, FFmpeg PSNR outputs, `results/summary.csv`, and aggregate-by-threshold CSV/JSON. All videos validate as `832x480`, 45 frames, 16 fps, duration `2.812500s`.
-- Prompt-01 SeaCache aggregate results: threshold `0.05` no reuse, `529.025s`, `0.988x`, PSNR `Infinity`; `0.10` reuse/recompute `6/44`, `469.995s`, `1.112x`, PSNR `36.303 dB`; `0.20` `20/30`, `333.084s`, `1.569x`, PSNR `24.558 dB`; `0.30` `27/23`, `265.758s`, `1.966x`, PSNR `20.562 dB`; `0.50` `35/15`, `188.053s`, `2.779x`, PSNR `19.460 dB`. Baseline prompt 01 compute time was `522.603s`.
-- 2026-06-11 launched a denser SeaCache threshold sweep on prompt 02 using the same single-process runner and reused reference baseline artifacts. Preflight confirmed the GPU idle, `/hy-tmp` had about `144G` free, no tmux session was running, and `run_batch.py --cpu_validate --prompt_start 1 --prompt_limit 1` found complete prompt 02 baseline artifacts.
-- Prompt-02 dense SeaCache tmux session: `seacache_prompt02_dense_20260611_204826`; result root: `/hy-tmp/wan22_seacache_prompt02_dense_20260611_204826`; workspace symlink: `experiment_results/wan22_seacache_prompt02_dense_20260611_204826`. Thresholds are `0.08 0.10 0.12 0.15 0.18 0.20 0.25 0.30 0.40 0.50`, with seed `42`, `832*480`, 45 frames, 50 dpm++ steps, `offload_model=True`, `convert_model_dtype=True`, block/CFG caches disabled. Launch check confirmed the runner reached one-time WanT2V pipeline initialization and started `SeaCache 0.08 prompt 02`, with no failed records at that time.
-- Prompt-02 dense SeaCache sweep completed. tmux exited, GPU returned idle, no failed records were found, and all 10 candidate videos validated with ffprobe as `832x480`, 45 frames, 16 fps, duration `2.812500s`. The archive contains videos, commands, raw logs, timing files, ffprobe JSON, PSNR outputs, `results/summary.csv`, and aggregate-by-threshold CSV/JSON.
-- Prompt-02 dense SeaCache aggregate results: baseline compute time `522.608s`; threshold `0.08` no reuse, `528.725s`, `0.988x`, PSNR `Infinity`; `0.10` reuse/recompute `5/45`, `479.491s`, `1.090x`, PSNR `45.532 dB`; `0.12` `11/39`, `421.440s`, `1.240x`, PSNR `42.475 dB`; `0.15` `16/34`, `372.696s`, `1.402x`, PSNR `35.441 dB`; `0.18` `19/31`, `343.774s`, `1.520x`, PSNR `29.848 dB`; `0.20` `20/30`, `334.663s`, `1.562x`, PSNR `30.097 dB`; `0.25` `25/25`, `285.500s`, `1.831x`, PSNR `29.055 dB`; `0.30` `27/23`, `265.988s`, `1.965x`, PSNR `29.582 dB`; `0.40` `32/18`, `217.301s`, `2.405x`, PSNR `27.044 dB`; `0.50` `34/16`, `197.847s`, `2.641x`, PSNR `23.725 dB`.
-- Created `report_seacache_vs_zeus_threshold_prompt12.md` comparing ZEUS-threshold and SeaCache on prompts 01 and 02. The comparison uses the completed ZEUS-threshold 10-prompt reuse_interp summary and the two completed SeaCache prompt sweeps. Main takeaway: SeaCache dominates ZEUS-threshold on quality/speed tradeoff for these prompts, especially prompt 02; recommended next multi-prompt SeaCache thresholds are `0.12 0.15 0.20 0.30 0.40`.
-- Prepared the OpenVid first-50 remote handoff for running half of the ZEUS-threshold prompt/threshold dataset on another 2 x A800 machine. Added `handoff/openvid_first50_2xa800/` with remote setup, CPU validation, two-GPU tmux launch, shard merge, and README instructions.
-- The remote task split is two single-process shards: `shard00_prompts000_024` on GPU 0 with `prompt_start=0,prompt_limit=25`, and `shard01_prompts025_049` on GPU 1 with `prompt_start=25,prompt_limit=25`. Each shard loads one WanT2V pipeline and then runs its baselines and 10 ZEUS-threshold candidates sequentially, avoiding repeated checkpoint loading.
-- Packed the existing `/hy-tmp/miniconda3/envs/Wan2.2` environment with `conda-pack` into `env/Wan2.2-conda-env.tar.gz`, copied `/hy-tmp/openvid_100_wan22_prompts.zip` into the handoff data directory, and assembled a code snapshot under `/hy-tmp/wan22_openvid_first50_handoff_build/Wan2.2`.
-- Created final handoff archive `/hy-tmp/wan22_openvid_first50_handoff.tar.gz`, size about `3.8G`. The archive includes code, handoff scripts, packed Python environment, and OpenVid prompt zip. It does not include Wan2.2 T2V-A14B model weights; the remote default is `/hy-tmp/models/Wan2.2-T2V-A14B`, overrideable with `CKPT_DIR`.
-- Handoff validation passed: `bash -n` for the shell scripts, Python `py_compile` for the handoff merger and OpenVid runner/summarizer, tar content checks for the expected scripts/data/env files, and a full unpack rehearsal from the final archive. The rehearsal ran `setup_env.sh` from the unpacked bundle, then `cpu_validate_first50.sh` with the unpacked environment Python; it selected 50 prompts, 10 thresholds, 50 baselines, and 500 candidates with block/CFG caches disabled. The temporary rehearsal directory was removed afterward.
-- Uploaded the final handoff archive to HyCloud OSS personal data at `oss://datasets/wan22_openvid_first50_handoff.tar.gz` using account `18983866279`. Upload completed successfully with OSS status `200`, request id `0000019EB6B1E965936584850CA34117`; `oss ls -s -d oss://datasets/` confirmed the object is present. Local SHA256 for the uploaded file source is `ee3458b05944e4fa5439f62e3a2896d9f9920dbd4beabc0938a86fd64dfe7b9e`.
-
-## 2026-06-12
-
-- Launched an additional high-threshold SeaCache sweep for prompt 02 to extend the previous dense sweep beyond threshold `0.50`. Preflight confirmed the A100 80GB GPU was idle, no tmux session was running, and `run_batch.py --cpu_validate --prompt_start 1 --prompt_limit 1 --thresholds '0.60 0.80'` found complete reusable prompt 02 baseline artifacts.
-- tmux session: `seacache_prompt02_highthr_20260612_000218`; result root: `/hy-tmp/wan22_seacache_prompt02_highthr_20260612_000218`; workspace symlink: `experiment_results/wan22_seacache_prompt02_highthr_20260612_000218`. Settings match the previous prompt 02 SeaCache sweep except thresholds `0.60 0.80`; block and CFG caches are disabled, seed is `42`, shape is `832*480`, frame count is `45`, and sampling steps are `50`.
-- Launch monitoring confirmed metadata files, threshold env files, copied baseline artifacts, and `logs/seacache_th_0p60_prompt_02.log` were created. At the last check, no failed records were present and GPU memory had risen to about `12GB`, indicating the first candidate had entered generation.
-- Prompt-02 high-threshold SeaCache sweep completed. tmux exited, GPU returned idle, no failed records were found, and both candidate videos validated with ffprobe as `832x480`, 45 frames, 16 fps, duration `2.812500s`. Results: threshold `0.60` took `168.704s`, speedup `3.098x`, PSNR `20.262 dB`, reuse/recompute `37/13`; threshold `0.80` took `149.343s`, speedup `3.499x`, PSNR `18.631 dB`, reuse/recompute `39/11`. Compared with prompt-02 threshold `0.50` (`2.641x`, `23.725 dB`), `0.60` gains substantial speed but drops about `3.46 dB`; `0.80` is likely too aggressive for quality.
-- Organized top-level experiment reports into `reports/`: `report.md`, `report_main_experiments.md`, `report_supplementary_experiments.md`, and `report_seacache_vs_zeus_threshold_prompt12.md`. No report content was changed, and no non-log/non-progress references to the old top-level paths were found.
-- Re-read recent OpenVid/SeaCache data-generation logs and current scripts. Current data-generation task state: OpenVid-100 SeaCache scripts exist under `experiments/seacache_openvid100_50step_45f_480p/`; defaults generate 100 baselines plus 1000 SeaCache candidates over thresholds `0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.60 0.70 0.80`; the handoff directory `handoff/openvid_first50_2xa800/` currently targets a two-GPU remote first-50 SeaCache run split into prompts `0-24` and `25-49`.
-- Updated SeaCache default thresholds to 10 values covering `0.10` through `0.80`: `0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.60 0.70 0.80`. Synchronized this default across `experiments/seacache_50step_45f_480p/`, `experiments/seacache_openvid100_50step_45f_480p/`, and `handoff/openvid_first50_2xa800/` docs/launchers. Validation passed: conda `py_compile` for SeaCache/OpenVid runners and summarizers, `bash -n` for SeaCache/OpenVid/handoff shell scripts, regular SeaCache `run_batch.py --cpu_validate` reported `expected_candidate_runs=10`, and OpenVid SeaCache `run_batch.py --cpu_validate` reported `threshold_count=10` and `expected_candidate_runs=1000`.
-- Updated the local OpenVid-100 SeaCache data-generation shard to match the current assignment: this machine runs prompts 76-100, represented in the zero-based OpenVid manifest as `prompt_start=75,prompt_limit=25`, with SeaCache thresholds `0.10 0.15 0.20 0.25 0.30 0.40 0.50 0.60 0.70 0.80`. Updated defaults in `experiments/seacache_openvid100_50step_45f_480p/run_batch.py` and `run_tmux.sh`, and adjusted the README to describe the 25-prompt local shard. This supersedes the earlier full-100 default for the local machine; full-range runs still remain possible by overriding `PROMPT_START`/`PROMPT_LIMIT`.
-- Validation before launch passed: conda `py_compile` for the OpenVid SeaCache runner/summarizer, `bash -n run_tmux.sh`, and `run_batch.py --cpu_validate` selected exactly 25 prompts from `openvidhd_part1_075` through `openvidhd_part1_099`, 10 thresholds, 25 expected baselines, and 250 expected SeaCache candidates. `nvidia-smi` showed the A100 idle and `tmux ls` showed no existing session before launch.
-- Launched the local prompts 76-100 SeaCache OpenVid run in tmux session `seacache_openvid100_20260612_002814`. Result root: `/hy-tmp/wan22_seacache_openvid100_50step_45f_480p_20260612_002814`; workspace symlink: `experiment_results/wan22_seacache_openvid100_50step_45f_480p_20260612_002814`. Launch check confirmed `launch.env`, `experiment.env`, selected manifests, threshold env files, `runner.log`, and `logs/pipeline_init.log` were created; tmux remained active, the Python runner process was running, and no failure files were present at the last check.
+- Simplified `AGENTS.md` by merging the former `代码与接口约定` and `数据与自适应阶段规划` sections into `项目目标`.
+- Kept only the necessary cache composition, unified CLI, dataset-row, and adaptive predictor constraints in the project-goal section; no code or experiment logic was changed.

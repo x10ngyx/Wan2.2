@@ -256,8 +256,10 @@ def _parse_args():
         help="Block cache method. Use 'bwcache' for BWCache-style stack caching or 'block-group' for grouped residual block caching.")
     parser.add_argument(
         "--bwcache_thresh",
+        "--bwcache_threshold",
         type=float,
         default=0.15,
+        dest="bwcache_thresh",
         help="BWCache similarity threshold for average block relative-L1.")
     parser.add_argument(
         "--bwcache_reuse_interval",
@@ -292,8 +294,10 @@ def _parse_args():
         help="Number of transformer blocks per block-group cache group.")
     parser.add_argument(
         "--block_group_threshold",
+        "--block_threshold",
         type=float,
         default=0.05,
+        dest="block_group_threshold",
         help="Block-group cache relative-L1 threshold.")
     parser.add_argument(
         "--block_group_metric",
@@ -415,8 +419,10 @@ def _parse_args():
         help="Global sampling step where ZEUS switches to lagrange-style skip scheduling.")
     parser.add_argument(
         "--zeus_threshold",
+        "--timestep_threshold",
         type=float,
         default=0.1,
+        dest="zeus_threshold",
         help="Latent relative-L1 threshold for zeus-threshold timestep cache.")
     parser.add_argument(
         "--zeus_threshold_metric",

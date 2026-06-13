@@ -1,2 +1,0 @@
-Error: Local entry not found. Distant resource does not seem to be on huggingface.co. It is possible that a configuration issue prevents you from downloading resources from https://huggingface.co. Please check your firewall and proxy settings and make sure your SSL certificates are updated.
-Set HF_DEBUG=1 as environment variable for full traceback.
