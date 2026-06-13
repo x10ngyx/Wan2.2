@@ -23,7 +23,7 @@ from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.utils.utils import merge_video_audio, save_video, str2bool
 from wan.block_cache import BWBlockCacheConfig
 from wan.block_group_cache import BlockGroupCacheConfig
-from wan.cfg_cache import CFGCacheConfig
+from wan.cfg_cache import CFGCacheConfig, SeaCFGCacheConfig
 from wan.timestep_cache import (
     SeaCacheTimestepCacheConfig,
     ZeusThresholdTimestepCacheConfig,
@@ -303,8 +303,14 @@ def _parse_args():
         "--block_group_metric",
         type=str,
         default="pooled_rel_l1",
-        choices=["pooled_rel_l1", "full_rel_l1"],
+        choices=["pooled_rel_l1", "full_rel_l1", "sea_full_rel_l1"],
         help="Block-group cache similarity metric.")
+    parser.add_argument(
+        "--block_group_decision",
+        type=str,
+        default="instant",
+        choices=["instant", "accumulated"],
+        help="Block-group cache threshold decision mode. instant keeps the legacy single-distance threshold; accumulated uses SeaCache-style accumulated distance.")
     parser.add_argument(
         "--block_group_start",
         type=float,
@@ -326,11 +332,37 @@ def _parse_args():
         default=1e-6,
         help="Numerical epsilon for block-group cache relative-L1 denominator.")
     parser.add_argument(
+        "--block_group_ret_steps",
+        type=int,
+        default=1,
+        help="Number of initial denoising steps forced to recompute for accumulated block-group cache.")
+    parser.add_argument(
+        "--block_group_cutoff_steps",
+        type=int,
+        default=1,
+        help="Number of final denoising steps forced to recompute for accumulated block-group cache.")
+    parser.add_argument(
+        "--block_group_sea_power_exp",
+        type=float,
+        default=3.0,
+        help="Block-group sea_full_rel_l1 spectral prior exponent.")
+    parser.add_argument(
+        "--block_group_sea_power_const",
+        type=float,
+        default=1.0,
+        help="Block-group sea_full_rel_l1 spectral prior constant.")
+    parser.add_argument(
+        "--block_group_sea_norm_mode",
+        type=str,
+        default="mean",
+        choices=["mean", "peak"],
+        help="Block-group sea_full_rel_l1 spectral filter normalization mode.")
+    parser.add_argument(
         "--cfg_cache",
         type=str,
         default="none",
-        choices=["none", "threshold"],
-        help="CFG cache method. Use 'threshold' to skip uncond branches by conditional-output relative-L1.")
+        choices=["none", "threshold", "sea-threshold"],
+        help="CFG cache method. Use 'threshold' or SeaCache-aligned 'sea-threshold' to skip uncond branches.")
     parser.add_argument(
         "--cfg_start",
         type=float,
@@ -360,7 +392,7 @@ def _parse_args():
         "--cfg_max_reuse",
         type=int,
         default=3,
-        help="Maximum consecutive CFG cache hits before forcing a full CFG refresh.")
+        help="Maximum consecutive hits for threshold CFG cache; sea-threshold ignores this and uses accumulated distance.")
     parser.add_argument(
         "--cfg_eps",
         type=float,
@@ -371,6 +403,32 @@ def _parse_args():
         action="store_true",
         default=False,
         help="When CFG cache misses, force a full CFG refresh: recompute both cond and uncond branches, bypassing timestep/block reuse for that refresh.")
+    parser.add_argument(
+        "--cfg_sea_power_exp",
+        type=float,
+        default=3.0,
+        help="Sea CFG cache spectral prior exponent.")
+    parser.add_argument(
+        "--cfg_sea_power_const",
+        type=float,
+        default=1.0,
+        help="Sea CFG cache spectral prior constant.")
+    parser.add_argument(
+        "--cfg_sea_norm_mode",
+        type=str,
+        default="mean",
+        choices=["mean", "peak"],
+        help="Sea CFG cache spectral filter normalization mode.")
+    parser.add_argument(
+        "--cfg_ret_steps",
+        type=int,
+        default=1,
+        help="Number of initial global denoising steps forced to recompute for sea-threshold CFG cache.")
+    parser.add_argument(
+        "--cfg_cutoff_steps",
+        type=int,
+        default=1,
+        help="Number of final global denoising steps forced to recompute for sea-threshold CFG cache.")
     parser.add_argument(
         "--zeus_acc_start",
         type=int,
@@ -725,10 +783,16 @@ def generate(args):
                 group_size=args.block_group_size,
                 threshold=args.block_group_threshold,
                 metric=args.block_group_metric,
+                decision=args.block_group_decision,
                 start=args.block_group_start,
                 end=args.block_group_end,
                 max_reuse=args.block_group_max_reuse,
                 eps=args.block_group_eps,
+                ret_steps=args.block_group_ret_steps,
+                cutoff_steps=args.block_group_cutoff_steps,
+                sea_power_exp=args.block_group_sea_power_exp,
+                sea_power_const=args.block_group_sea_power_const,
+                sea_norm_mode=args.block_group_sea_norm_mode,
             )
             logging.info(f"Enabled block-group cache: {block_group_cache_config}")
 
@@ -745,6 +809,20 @@ def generate(args):
                 force_uncond_recompute_on_miss=args.cfg_force_uncond_recompute_on_miss,
             )
             logging.info(f"Enabled CFG cache: {cfg_cache_config}")
+        elif args.cfg_cache == "sea-threshold":
+            cfg_cache_config = SeaCFGCacheConfig(
+                enabled=True,
+                threshold=args.cfg_threshold,
+                max_reuse=args.cfg_max_reuse,
+                eps=args.cfg_eps,
+                force_uncond_recompute_on_miss=args.cfg_force_uncond_recompute_on_miss,
+                power_exp=args.cfg_sea_power_exp,
+                power_const=args.cfg_sea_power_const,
+                norm_mode=args.cfg_sea_norm_mode,
+                ret_steps=args.cfg_ret_steps,
+                cutoff_steps=args.cfg_cutoff_steps,
+            )
+            logging.info(f"Enabled Sea CFG cache: {cfg_cache_config}")
 
         logging.info(f"Generating video ...")
         inference_start = time.perf_counter()

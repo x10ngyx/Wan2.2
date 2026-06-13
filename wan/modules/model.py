@@ -307,7 +307,7 @@ class WanAttentionBlock(nn.Module):
         x_m = self._modulated_norm1(x, e)
         if metric == "pooled_rel_l1":
             return x_m.float().mean(dim=1)
-        if metric == "full_rel_l1":
+        if metric in {"full_rel_l1", "sea_full_rel_l1"}:
             return x_m.to(dtype=x.dtype)
         raise ValueError(f"Unsupported block-group cache metric: {metric}")
 
@@ -476,6 +476,7 @@ class WanModel(ModelMixin, ConfigMixin):
         block_group_cache_key=None,
         block_group_cache_step_index=None,
         block_group_cache_num_steps=None,
+        block_group_cache_scheduler_sigmas=None,
         block_group_cache_force_recompute=False,
         timestep_cache=None,
         timestep_cache_key=None,
@@ -602,7 +603,9 @@ class WanModel(ModelMixin, ConfigMixin):
                                     group_state,
                                     block_group_cache_step_index,
                                     block_group_cache_num_steps,
-                                    group_feature)):
+                                    group_feature,
+                                    grid_size=grid_sizes[0],
+                                    scheduler_sigmas=block_group_cache_scheduler_sigmas)):
                             x = x + group_state.cached_residual
                             group_state.record_reuse(block_group_cache_step_index)
                             continue
@@ -686,7 +689,9 @@ class WanModel(ModelMixin, ConfigMixin):
                             group_state,
                             block_group_cache_step_index,
                             block_group_cache_num_steps,
-                            feature)):
+                            feature,
+                            grid_size=grid_sizes[0],
+                            scheduler_sigmas=block_group_cache_scheduler_sigmas)):
                     x = x + group_state.cached_residual
                     group_state.record_reuse(block_group_cache_step_index)
                     continue

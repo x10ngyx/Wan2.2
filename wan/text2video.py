@@ -19,7 +19,7 @@ from .distributed.fsdp import shard_model
 from .distributed.sequence_parallel import sp_attn_forward, sp_dit_forward
 from .block_cache import BWBlockCache, BWBlockCacheConfig
 from .block_group_cache import BlockGroupCache, BlockGroupCacheConfig
-from .cfg_cache import CFGCache, CFGCacheConfig
+from .cfg_cache import CFGCache, CFGCacheConfig, SeaCFGCache, SeaCFGCacheConfig
 from .distributed.util import get_world_size
 from .modules.model import WanModel
 from .modules.t5 import T5EncoderModel
@@ -396,8 +396,11 @@ class WanT2V:
                 block_group_cache = BlockGroupCache(block_group_cache_config)
 
             cfg_cache = None
+            cfg_cache_is_sea = isinstance(cfg_cache_config, SeaCFGCacheConfig)
             if cfg_cache_config is not None and cfg_cache_config.enabled:
-                cfg_cache = CFGCache(cfg_cache_config)
+                cfg_cache = (
+                    SeaCFGCache(cfg_cache_config)
+                    if cfg_cache_is_sea else CFGCache(cfg_cache_config))
 
             arg_c = {'context': context, 'seq_len': seq_len}
             arg_null = {'context': context_null, 'seq_len': seq_len}
@@ -423,6 +426,7 @@ class WanT2V:
                     block_group_cache_key=(model_stage, branch),
                     block_group_cache_step_index=step_index,
                     block_group_cache_num_steps=len(timesteps),
+                    block_group_cache_scheduler_sigmas=getattr(sample_scheduler, "sigmas", None),
                     block_group_cache_force_recompute=force_recompute,
                     timestep_cache=timestep_cache if timestep_cache_is_seacache else None,
                     timestep_cache_key=(model_stage, branch),
@@ -501,7 +505,13 @@ class WanT2V:
 
                 cfg_key = model_stage
                 cfg_metric_feature = None
-                if (cfg_cache is not None and
+                cfg_metric_grid_size = None
+                if cfg_cache is not None and cfg_cache_is_sea:
+                    cfg_metric_feature, cfg_metric_grid_size = model.seacache_feature(
+                        latent_model_input,
+                        timestep,
+                        seq_len)
+                elif (cfg_cache is not None and
                         cfg_cache.config.metric != "cond_output_rel_l1"):
                     cfg_metric_feature = model.cfg_cache_feature(
                         latent_model_input,
@@ -514,6 +524,40 @@ class WanT2V:
                     noise_pred_uncond = branch_forward('uncond', arg_null)
                     noise_pred = noise_pred_uncond + sample_guide_scale * (
                         noise_pred_cond - noise_pred_uncond)
+                elif cfg_cache_is_sea:
+                    if cfg_cache.should_reuse(
+                            cfg_key,
+                            step_index,
+                            len(timesteps),
+                            metric_feature=cfg_metric_feature,
+                            grid_size=cfg_metric_grid_size,
+                            scheduler_sigmas=getattr(sample_scheduler, "sigmas", None)):
+                        noise_pred_cond = branch_forward('cond', arg_c)
+                        noise_pred = cfg_cache.reuse(
+                            cfg_key,
+                            step_index,
+                            noise_pred_cond,
+                            sample_guide_scale)
+                    else:
+                        force_full_cfg_recompute = cfg_cache.config.force_uncond_recompute_on_miss
+                        noise_pred_cond = branch_forward(
+                            'cond',
+                            arg_c,
+                            force_recompute=force_full_cfg_recompute)
+                        noise_pred_uncond = branch_forward(
+                            'uncond',
+                            arg_null,
+                            force_recompute=force_full_cfg_recompute)
+                        noise_pred = cfg_cache.recompute(
+                            cfg_key,
+                            step_index,
+                            noise_pred_cond,
+                            noise_pred_uncond,
+                            sample_guide_scale,
+                            metric_feature=cfg_metric_feature,
+                            grid_size=cfg_metric_grid_size,
+                            scheduler_sigmas=getattr(sample_scheduler, "sigmas", None),
+                            num_steps=len(timesteps))
                 elif cfg_cache.config.metric != "cond_output_rel_l1":
                     if cfg_cache.should_reuse(
                             cfg_key,
