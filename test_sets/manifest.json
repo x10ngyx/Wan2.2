@@ -1,0 +1,50 @@
+{
+  "created_at": "2026-06-15",
+  "root": "/hy-tmp/work/Wan2.2/test_sets",
+  "sets": [
+    {
+      "name": "ali_10",
+      "count": 10,
+      "source": "/hy-tmp/work/Wan2.2/prompt.txt",
+      "files": [
+        "ali_10/prompts.txt",
+        "ali_10/prompts.jsonl"
+      ]
+    },
+    {
+      "name": "openvid_100",
+      "count": 100,
+      "source": "/hy-tmp/openvid_100_wan22_prompts.zip",
+      "files": [
+        "openvid_100/prompts.txt",
+        "openvid_100/prompts.jsonl",
+        "openvid_100/source_dataset_100.jsonl",
+        "openvid_100/source_selected_100.csv",
+        "openvid_100/source_selected_100.jsonl",
+        "openvid_100/source_selection_stats.json",
+        "openvid_100/SOURCE_README_WAN22_PROMPT_DATASET.md"
+      ]
+    },
+    {
+      "name": "vbench_every20",
+      "count": 51,
+      "source": "https://raw.githubusercontent.com/Vchitect/VBench/master/VBench-2.0/prompts/VBench2_full_text.txt",
+      "source_prompt_line_count": 1013,
+      "source_first_index_1based": 1,
+      "source_last_index_1based": 1001,
+      "sampling_rule": "take prompt lines 1, 21, 41, ... every 20 lines through line 1001",
+      "files": [
+        "vbench_every20/VBench2_full_text.txt",
+        "vbench_every20/prompts.txt",
+        "vbench_every20/prompts.jsonl"
+      ]
+    }
+  ],
+  "combined": {
+    "count": 161,
+    "files": [
+      "all_prompts.jsonl",
+      "all_prompts.csv"
+    ]
+  }
+}

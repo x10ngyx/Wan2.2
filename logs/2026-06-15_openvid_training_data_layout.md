@@ -1,0 +1,35 @@
+# 2026-06-15 OpenVid Training Data Layout
+
+- Created `scripts/build_openvid_training_data_layout.py`.
+- Built a clean downstream training view at `/hy-tmp/openvid_100_seacache_trace_data/data`.
+- The layout intentionally hides the original source split (`001-033`, `034-100`) and shard split from consumer-facing paths.
+- Large artifacts are symlinked into stable sample/threshold paths instead of copied.
+- Main tables:
+  - `data/tables/summary.csv`
+  - `data/tables/summary.jsonl`
+  - `data/tables/prompts.csv`
+  - `data/tables/prompts.jsonl`
+  - `data/metadata/manifest.json`
+- Artifact layout:
+  - `data/baseline/videos/<sample_id>.mp4`
+  - `data/baseline/logs/<sample_id>.log`
+  - `data/baseline/ffprobe/<sample_id>.json`
+  - `data/baseline/commands/<sample_id>.sh`
+  - `data/baseline/step_inputs/<sample_id>/`
+  - `data/seacache/videos/th_<threshold>/<sample_id>.mp4`
+  - `data/seacache/logs/th_<threshold>/<sample_id>.log`
+  - `data/seacache/ffprobe/th_<threshold>/<sample_id>.json`
+  - `data/seacache/psnr/th_<threshold>/<sample_id>.json`
+  - `data/seacache/commands/th_<threshold>/<sample_id>.sh`
+  - `data/seacache/step_inputs/th_<threshold>/<sample_id>/`
+- Validation results:
+  - `summary.csv`: `1000` rows.
+  - `prompts.csv`: `100` rows.
+  - baseline video links: `100`.
+  - SeaCache video links: `1000`.
+  - PSNR JSON links: `1000`.
+  - step input links: `1100`.
+  - broken links: `0`.
+  - missing required paths from `summary.csv`: `0`.
+  - required public paths in `summary.csv` contain no `001_033`, `034_100`, or `shard` names.
+- One optional PSNR text log and one optional ffmpeg PSNR log are missing for `openvidhd_part1_033` at `th_0p10`; the PSNR JSON exists and the optional fields were left empty.

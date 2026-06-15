@@ -25,7 +25,7 @@
 - 系统盘约 `30G`。不要把模型权重、数据集、checkpoint、视频输出或大型缓存放到 `/root`、`/`、`/usr` 等系统盘路径下。
 - 用户已说明 `/hy-tmp` 下的数据不需要担心丢失；但重要代码、实验结果表、报告、agent 聊天概要仍必须纳入 git 版本管理。
 - Wan2.2 T2V-14B 权重目录为 `/hy-tmp/models/Wan2.2-T2V-A14B`。
-- OpenVid-100 prompt zip 路径为 `/hy-tmp/openvid_100_wan22_prompts.zip`。
+- 测试集 prompt 统一目录为 `/hy-tmp/work/Wan2.2/test_sets`；
 - Hugging Face / transformers 缓存建议显式指向 `/hy-tmp`：
 
 ```bash

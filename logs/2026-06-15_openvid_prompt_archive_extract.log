@@ -1,0 +1,29 @@
+== start 2026-06-15T19:03:04+08:00 ==
+Filesystem                 Size  Used Avail Use% Mounted on
+/dev/mapper/vgdata-lvdata  600G  389G  212G  65% /hy-tmp
+== testing /hy-tmp/prompt001-033.tar.gz 2026-06-15T19:03:04+08:00 ==
+== start 2026-06-15T19:08:47+08:00 ==
+Filesystem                 Size  Used Avail Use% Mounted on
+/dev/mapper/vgdata-lvdata  600G  389G  212G  65% /hy-tmp
+== checking /hy-tmp/prompt001-033.tar.gz 2026-06-15T19:08:47+08:00 ==
+== extracting /hy-tmp/prompt001-033.tar.gz -> /hy-tmp/openvid_100_seacache_trace_data 2026-06-15T19:08:47+08:00 ==
+== extracted /hy-tmp/prompt001-033.tar.gz 2026-06-15T19:17:41+08:00 ==
+Filesystem                 Size  Used Avail Use% Mounted on
+/dev/mapper/vgdata-lvdata  600G  433G  168G  73% /hy-tmp
+== checking /hy-tmp/prompt034-100.tar.gz 2026-06-15T19:17:41+08:00 ==
+== extracting /hy-tmp/prompt034-100.tar.gz -> /hy-tmp/openvid_100_seacache_trace_data 2026-06-15T19:17:41+08:00 ==
+== extracted /hy-tmp/prompt034-100.tar.gz 2026-06-15T19:37:47+08:00 ==
+Filesystem                 Size  Used Avail Use% Mounted on
+/dev/mapper/vgdata-lvdata  600G  523G   78G  88% /hy-tmp
+== organizing links 2026-06-15T19:37:47+08:00 ==
+== summary 2026-06-15T19:37:47+08:00 ==
+root=/hy-tmp/openvid_100_seacache_trace_data
+source_dirs=2
+shard_dirs=6
+baseline_videos=100
+seacache_videos=1000
+summary_csv=6
+135G	/hy-tmp/openvid_100_seacache_trace_data
+Filesystem                 Size  Used Avail Use% Mounted on
+/dev/mapper/vgdata-lvdata  600G  523G   78G  88% /hy-tmp
+== all done 2026-06-15T19:37:48+08:00 ==

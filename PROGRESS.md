@@ -211,6 +211,44 @@ The main report covers fixed ZEUS, ZEUS-threshold reuse_interp, and the three-ca
 2. Use the consolidated table to define the first adaptive-threshold predictor baseline.
 3. Keep future progress entries concise and append-only from this reset point.
 
+## 2026-06-15 TaylorSeer Timestep-Only Prototype
+
+- Added a lightweight timestep-output TaylorSeer prototype for WanT2V experiments.
+- New CLI:
+  - `--timestep_cache taylorseer`
+  - `--taylorseer_interval <int>`
+  - `--taylorseer_order <int>`
+  - `--taylorseer_ret_steps <int>`
+  - `--taylorseer_cutoff_steps <int>`
+- Implementation files:
+  - `wan/timestep_cache.py`: `TaylorSeerTimestepCacheConfig`, `TaylorSeerTimestepCacheState`, `TaylorSeerTimestepCache`.
+  - `wan/text2video.py`: routes timestep-cache branch calls through TaylorSeer when selected, preserving explicit `(model_stage, branch)` keys.
+  - `generate.py`: exposes the CLI and constructs the TaylorSeer timestep-cache config.
+- Scope note: this is a timestep-output-level Taylor-style forecasting baseline, not a full official TaylorSeer hidden-state/block-level reproduction. It is intended for a first SeaCache-vs-TaylorSeer timestep-only comparison on the existing single-A100 Wan2.2 pipeline.
+- Validation:
+  - `python -m py_compile generate.py wan/timestep_cache.py wan/text2video.py` passed in the `Wan2.2` conda env.
+  - File-level cache behavior check passed without importing the full `wan` package: for `interval=3, order=1, ret_steps=1, cutoff_steps=1`, recompute steps were `[0, 1, 4, 7]` and reuse steps were `[2, 3, 5, 6]`.
+- Current instance has no visible GPU: `nvidia-smi` returned `No devices were found`, so real Wan2.2 generation was not launched in this session.
+
+Superseded update:
+
+- The main-code TaylorSeer prototype described above was reverted from `generate.py`, `wan/text2video.py`, `wan/timestep_cache.py`, and `wan/modules/model.py` at the user's request.
+- Main Wan2.2 cache paths now contain no TaylorSeer integration and should behave as before for ZEUS, SeaCache, block cache, and CFG cache.
+- TaylorSeer work was moved into a standalone implementation under `taylorseer_wan22/`:
+  - `taylorseer_wan22/cache.py`
+  - `taylorseer_wan22/patch.py`
+  - `taylorseer_wan22/text2video.py`
+  - `taylorseer_wan22/generate_t2v.py`
+- The standalone implementation follows the official TaylorSeer-Wan2.1 structure more closely than the reverted prototype:
+  - patch transformer block forward only inside the standalone runner,
+  - cache self-attention, cross-attention, and FFN module outputs,
+  - use `fresh_threshold`, `max_order`, `first_enhance`, `cache_counter`, and `activated_steps`,
+  - keep cond/uncond stream caches separate,
+  - keep Wan2.2 high/low model stages separate with independent cache states.
+- Validation after the revert and standalone move:
+  - `/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m py_compile taylorseer_wan22/cache.py taylorseer_wan22/patch.py taylorseer_wan22/text2video.py taylorseer_wan22/generate_t2v.py generate.py wan/text2video.py wan/timestep_cache.py wan/modules/model.py` passed.
+  - `rg -n "TaylorSeer|taylorseer" generate.py wan/text2video.py wan/timestep_cache.py wan/modules/model.py` returned no matches.
+
 ## 2026-06-13 Documentation Cleanup
 
 - Simplified `AGENTS.md` by merging the former `代码与接口约定` and `数据与自适应阶段规划` sections into `项目目标`.
@@ -333,3 +371,132 @@ The main report covers fixed ZEUS, ZEUS-threshold reuse_interp, and the three-ca
 - Launch check: tmux is active; first candidate `sea_ts_0p05__sea_bg_0p05__sea_cfg_0p05` entered 50-step sampling; GPU showed about `63107 MiB` used and `100%` utilization.
 - Runner writes per-candidate videos, logs, command records, ffprobe JSON, PSNR JSON/logs, and continuously refreshes `results/summary.csv` / `results/summary.json` after each completed candidate.
 - Known risk: block sea-full cache stores full filtered group features, so high-threshold combinations may hit GPU memory pressure. If the run fails, inspect `failed/` and the last candidate log, then resume with `RESUME_EXISTING=True`.
+
+## 2026-06-15 Three Sea-Style Cache Prompt-01 Grid Completion
+
+- Checked `/hy-tmp/wan22_three_cache_sea_prompt01_50step_45f_480p_20260614_005404`.
+- tmux has exited; GPU is idle; `failed/` is empty; `runner.log` ends with `Completed experiment`.
+- Completed artifacts:
+  - `125/125` videos
+  - `125/125` candidate ffprobe JSON files
+  - `125/125` candidate PSNR JSON files
+  - `125/125` candidate logs
+  - `125/125` command records
+  - result tables: `results/summary.csv` and `results/summary.json`
+- All candidate ffprobe rows match `832x480`, `45` frames, `16 fps`, duration `2.812500s`.
+- PSNR rows: `124` finite rows and `1` all-perfect/Infinity row (`sea_ts_0p05__sea_bg_0p05__sea_cfg_0p05`).
+- Fastest finite candidate: `sea_ts_1p00__sea_bg_1p00__sea_cfg_1p00`, `5.644x`, PSNR `11.914 dB`.
+- Best finite PSNR candidate: `sea_ts_0p05__sea_bg_0p10__sea_cfg_0p05`, `0.987x`, PSNR `37.465 dB`.
+- Best speed by PSNR target:
+  - PSNR `>=35 dB`: `sea_ts_0p10__sea_bg_0p10__sea_cfg_0p10`, `1.025x`, PSNR `36.747 dB`
+  - PSNR `>=30 dB`: `sea_ts_0p10__sea_bg_0p10__sea_cfg_0p10`, `1.025x`, PSNR `36.747 dB`
+  - PSNR `>=26 dB`: `sea_ts_0p10__sea_bg_0p05__sea_cfg_0p20`, `1.208x`, PSNR `26.430 dB`
+  - PSNR `>=24 dB`: `sea_ts_0p20__sea_bg_0p20__sea_cfg_0p20`, `1.496x`, PSNR `24.898 dB`
+  - PSNR `>=20 dB`: `sea_ts_0p20__sea_bg_0p20__sea_cfg_0p20`, `1.496x`, PSNR `24.898 dB`
+  - PSNR `>=19 dB`: `sea_ts_0p40__sea_bg_0p10__sea_cfg_1p00`, `2.845x`, PSNR `19.007 dB`
+  - PSNR `>=18 dB`: `sea_ts_1p00__sea_bg_0p05__sea_cfg_0p20`, `3.575x`, PSNR `18.233 dB`
+  - PSNR `>=16 dB`: `sea_ts_0p40__sea_bg_1p00__sea_cfg_0p40`, `3.895x`, PSNR `16.662 dB`
+  - PSNR `>=15 dB`: `sea_ts_1p00__sea_bg_1p00__sea_cfg_0p20`, `4.873x`, PSNR `15.633 dB`
+- Main prompt-01 takeaway: the three-cache sea-style grid completed without OOM. The useful higher-quality frontier is still dominated by moderate thresholds around `0.10-0.20`; aggressive thresholds reach much higher speed but quality falls quickly.
+
+## 2026-06-15 OSS OpenVid Space Check
+
+- Checked disk space before considering OSS download:
+  - `/hy-tmp`: `400G` total, `265G` used, `136G` available.
+  - `/`: `30G` total, `7.7G` used, `23G` available.
+- OSS login for the provided HyCloud account succeeded after the previous token returned `401 Authentication Failed`.
+- `oss://datasets/` currently contains OpenVid prompt data split as:
+  - `prompt001-033.tar.gz`: `40.59GB`
+  - `prompt034-100.tar.gz`: `82.61GB`
+  - Combined compressed size: about `123.20GB`.
+- Conclusion: downloading only the two compressed prompt archives to `/hy-tmp` is technically possible but leaves only about `12-13GB` free, which is too tight for normal work and not enough to safely extract them. Do not download and extract both archives on the current disk without first freeing substantial space or using a streaming/selective extraction workflow.
+
+## 2026-06-15 OpenVid Prompt Archive Download
+
+- User requested downloading both OSS prompt archives despite tight disk margin.
+- Added script: `scripts/download_openvid_prompt_archives.sh`.
+- Launched tmux session: `download_openvid_prompts`.
+- Log path: `logs/2026-06-15_openvid_prompt_archive_download.log`.
+- Download order:
+  1. `oss://datasets/prompt001-033.tar.gz` -> `/hy-tmp/prompt001-033.tar.gz`
+  2. `oss://datasets/prompt034-100.tar.gz` -> `/hy-tmp/prompt034-100.tar.gz`
+- Launch state: first archive was downloading; log showed about `3.9%` of `40.59GB`. `/hy-tmp` had about `134G` available at launch after partial temp/download state.
+- Important: do not start extraction while both archives are being downloaded unless space is freed first.
+
+## 2026-06-15 OpenVid Prompt Archive Extraction
+
+- `/hy-tmp` was expanded to `600G`; before extraction it had about `212G` available.
+- Confirmed downloaded archives:
+  - `/hy-tmp/prompt001-033.tar.gz`: `41G`
+  - `/hy-tmp/prompt034-100.tar.gz`: `83G`
+- Added extraction/organization script: `scripts/extract_openvid_prompt_archives.sh`.
+- Launched tmux session: `extract_openvid_prompts`; it completed successfully.
+- Extraction log: `logs/2026-06-15_openvid_prompt_archive_extract.log`.
+- Unified extracted root: `/hy-tmp/openvid_100_seacache_trace_data`
+- Workspace symlink: `experiment_results/openvid_100_seacache_trace_data`
+- Organized helper symlinks:
+  - `/hy-tmp/openvid_100_seacache_trace_data/sources/`: 2 source experiment directories.
+  - `/hy-tmp/openvid_100_seacache_trace_data/shards/`: 6 shard directories covering prompt indices `000-099`.
+- Final validation counts:
+  - source dirs: `2`
+  - shard dirs: `6`
+  - baseline videos: `100`
+  - SeaCache videos: `1000`
+  - per-shard `results/summary.csv`: `6`
+- Final extracted directory size: `135G`.
+- Final `/hy-tmp` state after keeping both compressed archives and extracted data: `600G` total, `523G` used, `78G` available.
+
+## 2026-06-15 OpenVid Training Data Layout
+
+- User requested a clean `data/` layout for downstream training, without exposing the original `001-033`, `034-100`, or shard splits.
+- Added builder script: `scripts/build_openvid_training_data_layout.py`.
+- Created flat training-data view under `/hy-tmp/openvid_100_seacache_trace_data/data`.
+- The `data/` directory uses stable symlinks rather than duplicating the 135G extracted payload.
+- Public training entry points:
+  - `/hy-tmp/openvid_100_seacache_trace_data/data/tables/summary.csv`
+  - `/hy-tmp/openvid_100_seacache_trace_data/data/tables/summary.jsonl`
+  - `/hy-tmp/openvid_100_seacache_trace_data/data/tables/prompts.csv`
+  - `/hy-tmp/openvid_100_seacache_trace_data/data/tables/prompts.jsonl`
+  - `/hy-tmp/openvid_100_seacache_trace_data/data/metadata/manifest.json`
+- Flat artifact layout:
+  - `data/baseline/videos/<sample_id>.mp4`
+  - `data/baseline/logs/<sample_id>.log`
+  - `data/baseline/ffprobe/<sample_id>.json`
+  - `data/baseline/commands/<sample_id>.sh`
+  - `data/baseline/step_inputs/<sample_id>/`
+  - `data/seacache/videos/th_<threshold>/<sample_id>.mp4`
+  - `data/seacache/logs/th_<threshold>/<sample_id>.log`
+  - `data/seacache/ffprobe/th_<threshold>/<sample_id>.json`
+  - `data/seacache/psnr/th_<threshold>/<sample_id>.json`
+  - `data/seacache/commands/th_<threshold>/<sample_id>.sh`
+  - `data/seacache/step_inputs/th_<threshold>/<sample_id>/`
+- Validation:
+  - `summary.csv`: `1000` candidate rows.
+  - `prompts.csv`: `100` prompt rows.
+  - baseline video links: `100`.
+  - SeaCache video links: `1000`.
+  - PSNR JSON links: `1000`.
+  - step input links: `1100`.
+  - broken links under `data/`: `0`.
+  - required paths in `summary.csv`: `0` missing.
+  - public required paths in `summary.csv` contain no `001_033`, `034_100`, or `shard` split names.
+  - One optional PSNR text log and ffmpeg log are absent for `openvidhd_part1_033` at `th_0p10`; the PSNR JSON exists and the optional table fields are left empty.
+
+## 2026-06-15 Test Set Prompt Resource Organization
+
+- Created consolidated prompt resource directory: `test_sets/`.
+- Organized three prompt sets:
+  - `test_sets/ali_10/`: 10 Ali prompts copied from repository `prompt.txt`.
+  - `test_sets/openvid_100/`: 100 OpenVid prompts extracted from `/hy-tmp/openvid_100_wan22_prompts.zip`; source metadata files from the zip were preserved.
+  - `test_sets/vbench_every20/`: VBench-2.0 prompts downloaded from `https://raw.githubusercontent.com/Vchitect/VBench/master/VBench-2.0/prompts/VBench2_full_text.txt`; sampled source prompt lines `1, 21, 41, ... 1001`, producing 51 prompts from 1013 source prompt lines.
+- Each set has both `prompts.txt` for runner input and `prompts.jsonl` with stable `sample_id`, source index, and text.
+- Added combined indexes:
+  - `test_sets/all_prompts.jsonl`: 161 rows.
+  - `test_sets/all_prompts.csv`: 161 data rows plus header.
+  - `test_sets/manifest.json`: source paths, counts, files, and VBench sampling rule.
+  - `test_sets/SHA256SUMS`: checksums for all prompt-resource files.
+- Validation run:
+  - `wc -l` confirmed Ali `10`, OpenVid `100`, VBench sampled `51`, combined JSONL `161`.
+  - `python -m json.tool test_sets/manifest.json` passed.
+  - All JSONL files under `test_sets/` parsed successfully.
+- Follow-up AGENTS update: replaced the old OpenVid zip-only resource note with the unified prompt test set directory `/hy-tmp/work/Wan2.2/test_sets`; OpenVid-100 prompt files are now documented as `test_sets/openvid_100/`.

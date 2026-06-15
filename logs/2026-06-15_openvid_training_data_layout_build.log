@@ -1,0 +1,28 @@
+{
+  "root": "/hy-tmp/openvid_100_seacache_trace_data",
+  "data_dir": "data",
+  "layout": "flat training-data symlink view; no shard or source split is required for consumers",
+  "sample_count": 100,
+  "candidate_count": 1000,
+  "threshold_labels": [
+    "th_0p10",
+    "th_0p15",
+    "th_0p20",
+    "th_0p25",
+    "th_0p30",
+    "th_0p40",
+    "th_0p50",
+    "th_0p60",
+    "th_0p70",
+    "th_0p80"
+  ],
+  "baseline_videos": "data/baseline/videos",
+  "seacache_videos": "data/seacache/videos",
+  "tables": {
+    "summary_csv": "data/tables/summary.csv",
+    "summary_jsonl": "data/tables/summary.jsonl",
+    "prompts_csv": "data/tables/prompts.csv",
+    "prompts_jsonl": "data/tables/prompts.jsonl"
+  },
+  "paths_are_relative_to": "/hy-tmp/openvid_100_seacache_trace_data"
+}

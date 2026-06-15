@@ -1,0 +1,24 @@
+# 2026-06-15 OpenVid Prompt Archive Extraction
+
+- Read current handoff state from `PROGRESS.md`.
+- Confirmed the two prompt archives were present:
+  - `/hy-tmp/prompt001-033.tar.gz`: `41G`
+  - `/hy-tmp/prompt034-100.tar.gz`: `83G`
+- `/hy-tmp` had been expanded to `600G`; before extraction it had about `212G` free.
+- Added `scripts/extract_openvid_prompt_archives.sh`.
+- Started tmux session `extract_openvid_prompts` and wrote extraction output to `logs/2026-06-15_openvid_prompt_archive_extract.log`.
+- Initial version of the script attempted full `tar -tzf` preflight validation, but that doubled read time on large gzip archives. Stopped that preflight before extraction had started, removed the redundant full listing check, and relaunched direct extraction. `tar -xzf` still validates the gzip stream while extracting.
+- Extracted both archives into unified root `/hy-tmp/openvid_100_seacache_trace_data`.
+- Created helper symlink layers:
+  - `/hy-tmp/openvid_100_seacache_trace_data/sources/`
+  - `/hy-tmp/openvid_100_seacache_trace_data/shards/`
+  - `experiment_results/openvid_100_seacache_trace_data`
+- Final checks:
+  - source dirs: `2`
+  - shard dirs: `6`
+  - baseline videos: `100`
+  - SeaCache videos: `1000`
+  - per-shard result tables: `6`
+  - extracted size: `135G`
+  - final `/hy-tmp` space: `600G` total, `523G` used, `78G` available
+- The two compressed archives were kept in `/hy-tmp`; no cleanup was performed.

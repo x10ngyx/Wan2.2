@@ -1,0 +1,37 @@
+{
+  "source_csv": "/all/yiran02-disk2/huteng_data/openvid_100/OpenVidHD.csv",
+  "source_part": "part1",
+  "seed": 20260611,
+  "count": 100,
+  "content_group": {
+    "landscape": 39,
+    "people": 35,
+    "subject": 26
+  },
+  "portrait_group": {
+    "non_portrait": 65,
+    "portrait_or_people": 35
+  },
+  "motion_group": {
+    "dynamic": 55,
+    "calm": 45
+  },
+  "camera_motion": {
+    "static": 81,
+    "Undetermined": 7,
+    "pan_right": 4,
+    "zoom_in": 2,
+    "tilt_down": 2,
+    "tilt_up": 1,
+    "zoom_out": 1,
+    "tilt_down+pan_right": 1,
+    "pan_right+zoom_in": 1
+  },
+  "part": {
+    "part1": 100
+  },
+  "outputs": {
+    "jsonl": "/all/yiran02-disk2/huteng_data/openvid_100/selected_100.jsonl",
+    "csv": "/all/yiran02-disk2/huteng_data/openvid_100/selected_100.csv"
+  }
+}
