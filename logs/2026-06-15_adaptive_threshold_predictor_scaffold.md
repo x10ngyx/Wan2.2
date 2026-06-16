@@ -2,7 +2,7 @@
 
 ## Summary
 
-- Created `experiments/adaptive_threshold_predictor/` for prediction-network work, separate from generation runners.
+- Created `adaptive_threshold_predictor/` for prediction-network work, separate from generation runners.
 - Inspected `/hy-tmp/openvid_100_seacache_trace_data/data`.
 - Confirmed trace layout:
   - `data/tables/summary.csv`
@@ -12,12 +12,12 @@
 
 ## Files Added
 
-- `experiments/adaptive_threshold_predictor/__init__.py`
-- `experiments/adaptive_threshold_predictor/README.md`
-- `experiments/adaptive_threshold_predictor/models.py`
-- `experiments/adaptive_threshold_predictor/data.py`
-- `experiments/adaptive_threshold_predictor/inspect_trace_data.py`
-- `experiments/adaptive_threshold_predictor/train_gate.py`
+- `adaptive_threshold_predictor/__init__.py`
+- `adaptive_threshold_predictor/README.md`
+- `adaptive_threshold_predictor/models.py`
+- `adaptive_threshold_predictor/data.py`
+- `adaptive_threshold_predictor/inspect_trace_data.py`
+- `adaptive_threshold_predictor/train_gate.py`
 
 ## Model
 
@@ -31,7 +31,7 @@
 Ran:
 
 ```bash
-/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.adaptive_threshold_predictor.inspect_trace_data
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.inspect_trace_data
 ```
 
 Observed:
@@ -44,7 +44,7 @@ Observed:
 Ran:
 
 ```bash
-/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.adaptive_threshold_predictor.train_gate \
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.train_gate \
   --epochs 1 \
   --batch_size 2 \
   --max_examples 8 \
@@ -76,7 +76,7 @@ Result:
 Smoke command:
 
 ```bash
-/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.adaptive_threshold_predictor.run_feature_ablation \
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.run_feature_ablation \
   --epochs 1 \
   --batch_size 2 \
   --max_examples 10 \
@@ -105,11 +105,11 @@ Validation:
 
 ```bash
 /hy-tmp/miniconda3/envs/Wan2.2/bin/python -m py_compile \
-  experiments/adaptive_threshold_predictor/models.py \
-  experiments/adaptive_threshold_predictor/data.py \
-  experiments/adaptive_threshold_predictor/train_gate.py \
-  experiments/adaptive_threshold_predictor/inspect_trace_data.py \
-  experiments/adaptive_threshold_predictor/run_feature_ablation.py
+  adaptive_threshold_predictor/models.py \
+  adaptive_threshold_predictor/data.py \
+  adaptive_threshold_predictor/train_gate.py \
+  adaptive_threshold_predictor/inspect_trace_data.py \
+  adaptive_threshold_predictor/run_feature_ablation.py
 ```
 
 Group split smoke check:
@@ -121,7 +121,7 @@ Group split smoke check:
 Feature ablation smoke command:
 
 ```bash
-/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.adaptive_threshold_predictor.run_feature_ablation \
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.run_feature_ablation \
   --epochs 1 \
   --batch_size 2 \
   --max_examples 60 \

@@ -51,7 +51,7 @@ def main() -> None:
         build_cmd = [
             args.python,
             "-m",
-            "experiments.adaptive_threshold_predictor.build_feature_cache",
+            "adaptive_threshold_predictor.build_feature_cache",
             "--out_dir",
             str(cache_dir),
             "--dataset_mode",
@@ -75,7 +75,7 @@ def main() -> None:
         train_cmd = [
             args.python,
             "-m",
-            "experiments.adaptive_threshold_predictor.run_feature_ablation",
+            "adaptive_threshold_predictor.run_feature_ablation",
             "--cache_dir",
             str(cache_dir),
             "--dataset_mode",

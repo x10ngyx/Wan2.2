@@ -9,8 +9,8 @@ Add and run baseline controls for the adaptive threshold predictor:
 
 ## Code Changes
 
-- Added `ConditionOnlyAdaCacheGate` to `experiments/adaptive_threshold_predictor/models.py`.
-- Added `--control_mode` to `experiments/adaptive_threshold_predictor/train_gate.py`:
+- Added `ConditionOnlyAdaCacheGate` to `adaptive_threshold_predictor/models.py`.
+- Added `--control_mode` to `adaptive_threshold_predictor/train_gate.py`:
   - `feature`
   - `condition_only`
   - `noise_feature`
@@ -29,7 +29,7 @@ Output:
 Commands:
 
 ```bash
-/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.adaptive_threshold_predictor.train_gate \
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.train_gate \
   --cache_dir /hy-tmp/wan22_adaptive_threshold_feature_cache_candidate_inverse_20260616_012409 \
   --dataset_mode candidate_inverse \
   --feature_set latent_pool \
@@ -41,7 +41,7 @@ Commands:
   --save_val_predictions \
   --out_dir /hy-tmp/wan22_adaptive_threshold_controls_20260616/condition_only
 
-/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.adaptive_threshold_predictor.train_gate \
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.train_gate \
   --cache_dir /hy-tmp/wan22_adaptive_threshold_feature_cache_candidate_inverse_20260616_012409 \
   --dataset_mode candidate_inverse \
   --feature_set latent_pool \

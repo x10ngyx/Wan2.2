@@ -1,7 +1,7 @@
 # Adaptive Threshold Predictor
 
-This subdirectory keeps the prediction-network work separate from the Wan2.2
-generation runners. The current stage is timestep-cache-only, so
+This top-level package contains the adaptive threshold prediction work, separate
+from the Wan2.2 generation runners. The current stage is timestep-cache-only, so
 `ImprovedAdaCacheGate` predicts one threshold in `[0, 1]`.
 
 ## Data
@@ -99,13 +99,13 @@ configured target PSNR values.
 Inspect a traced latent and run one model forward pass:
 
 ```bash
-/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.adaptive_threshold_predictor.inspect_trace_data
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.inspect_trace_data
 ```
 
 Run a small debug training loop:
 
 ```bash
-/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.adaptive_threshold_predictor.train_gate \
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.train_gate \
   --dataset_mode candidate_inverse \
   --epochs 3 \
   --batch_size 4 \
@@ -118,7 +118,7 @@ Run a small debug training loop:
 Run all feature-set ablations with the same architecture and collect a summary:
 
 ```bash
-/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.adaptive_threshold_predictor.run_feature_ablation \
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.run_feature_ablation \
   --epochs 3 \
   --batch_size 4 \
   --out_root /hy-tmp/wan22_adaptive_threshold_feature_ablation
@@ -135,7 +135,7 @@ Raw latent training repeatedly opens 50,000 step `.pt` files and is too slow for
 multi-run ablations. Build pooled feature caches once:
 
 ```bash
-/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.adaptive_threshold_predictor.build_feature_cache \
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.build_feature_cache \
   --out_dir /hy-tmp/wan22_adaptive_threshold_feature_cache_candidate_inverse_20260616_012409 \
   --dataset_mode candidate_inverse \
   --dtype float32 \
@@ -147,7 +147,7 @@ multi-run ablations. Build pooled feature caches once:
 Then train from the cache:
 
 ```bash
-/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.adaptive_threshold_predictor.run_feature_ablation \
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.run_feature_ablation \
   --cache_dir /hy-tmp/wan22_adaptive_threshold_feature_cache_candidate_inverse_20260616_012409 \
   --dataset_mode candidate_inverse \
   --epochs 3 \

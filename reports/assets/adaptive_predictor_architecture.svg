@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #172033; }
+      .title { font-size: 34px; font-weight: 700; }
+      .subtitle { font-size: 18px; fill: #526078; }
+      .box-title { font-size: 23px; font-weight: 700; }
+      .shape { font-size: 18px; font-weight: 700; fill: #27364f; }
+      .range { font-size: 17px; fill: #526078; }
+      .input { fill: #eef6ff; stroke: #2f73b8; }
+      .feature { fill: #edf9f1; stroke: #2c8b57; }
+      .cond { fill: #fff7e8; stroke: #b97813; }
+      .fusion { fill: #f2efff; stroke: #6a55b8; }
+      .output { fill: #fff0f0; stroke: #bd3b3b; }
+      .note { fill: #f8fafc; stroke: #9aa7b8; }
+      .arrow { stroke: #34445f; stroke-width: 2.2; fill: none; marker-end: url(#arrowhead); }
+      .thin { stroke-width: 1.6; }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#34445f"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1600" height="900" fill="#ffffff"/>
+
+  <text x="70" y="64" class="title">Adaptive Threshold Predictor Architecture</text>
+  <text x="70" y="96" class="subtitle">Module names and shape changes only; input/output boxes keep value ranges.</text>
+
+  <!-- Inputs -->
+  <rect x="80" y="155" rx="10" ry="10" width="305" height="122" class="input" stroke-width="2"/>
+  <text x="104" y="190" class="box-title">Latent feature</text>
+  <text x="104" y="222" class="shape">[B, 128]</text>
+  <text x="104" y="252" class="range">五种feature中的一种</text>
+
+  <rect x="80" y="395" rx="10" ry="10" width="305" height="122" class="input" stroke-width="2"/>
+  <text x="104" y="430" class="box-title">Step index</text>
+  <text x="104" y="462" class="shape">[B, 1]</text>
+  <text x="104" y="492" class="range">0, 1, ... ,49 归一化到 [0,1]</text>
+
+  <rect x="80" y="565" rx="10" ry="10" width="305" height="122" class="input" stroke-width="2"/>
+  <text x="104" y="600" class="box-title">PSNR condition</text>
+  <text x="104" y="632" class="shape">[B, 1]</text>
+  <text x="104" y="662" class="range">20-50dB 归一化到 [0,1]</text>
+
+  <!-- Feature branch -->
+  <rect x="480" y="155" rx="10" ry="10" width="300" height="122" class="feature" stroke-width="2"/>
+  <text x="504" y="190" class="box-title">feature_proj</text>
+  <text x="504" y="226" class="shape">[B,128] -> [B,64]</text>
+
+  <rect x="875" y="155" rx="10" ry="10" width="285" height="122" class="feature" stroke-width="2"/>
+  <text x="899" y="190" class="box-title">Feature embedding</text>
+  <text x="899" y="226" class="shape">[B,64]</text>
+
+  <!-- Condition branch -->
+  <rect x="480" y="470" rx="10" ry="10" width="300" height="122" class="cond" stroke-width="2"/>
+  <text x="504" y="505" class="box-title">normalize + concat</text>
+  <text x="504" y="541" class="shape">[B,1] + [B,1] -> [B,2]</text>
+
+  <rect x="875" y="470" rx="10" ry="10" width="285" height="122" class="cond" stroke-width="2"/>
+  <text x="899" y="505" class="box-title">cond_embed</text>
+  <text x="899" y="541" class="shape">[B,2] -> [B,64]</text>
+
+  <!-- Fusion and head -->
+  <rect x="1235" y="300" rx="10" ry="10" width="285" height="122" class="fusion" stroke-width="2"/>
+  <text x="1259" y="335" class="box-title">concat</text>
+  <text x="1259" y="371" class="shape">[B,64]+[B,64] -> [B,128]</text>
+
+  <rect x="1235" y="510" rx="10" ry="10" width="285" height="122" class="fusion" stroke-width="2"/>
+  <text x="1259" y="545" class="box-title">prediction_head</text>
+  <text x="1259" y="581" class="shape">[B,128] -> [B,1]</text>
+
+  <!-- Output -->
+  <rect x="1235" y="735" rx="10" ry="10" width="285" height="112" class="output" stroke-width="2"/>
+  <text x="1259" y="770" class="box-title">Predicted threshold</text>
+  <text x="1259" y="802" class="shape">[B,1]</text>
+  <text x="1259" y="832" class="range">range: [0,1]</text>
+
+  <!-- Arrows -->
+  <path d="M385 216 H480" class="arrow"/>
+  <path d="M780 216 H875" class="arrow"/>
+  <path d="M1160 216 C1205 216 1205 338 1235 338" class="arrow"/>
+
+  <path d="M385 456 C430 456 440 505 480 514" class="arrow thin"/>
+  <path d="M385 626 C430 626 440 580 480 552" class="arrow thin"/>
+  <path d="M780 531 H875" class="arrow"/>
+  <path d="M1160 531 C1205 531 1205 383 1235 383" class="arrow"/>
+
+  <path d="M1377 422 V510" class="arrow"/>
+  <path d="M1377 632 V735" class="arrow"/>
+</svg>

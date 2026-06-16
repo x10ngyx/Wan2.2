@@ -180,7 +180,32 @@ Sea CFG 的主要配置：
 | `16-18 dB` | 29 |
 | `<16 dB` | 13 |
 
-### 3.6 完整结果表
+### 3.6 与旧 three-cache merge 实验的代表点对比
+
+旧实验指 `/hy-tmp/work/Wan2.2/experiment_results/wan22_three_cache_threshold_grid_prompt01_50step_45f_480p_20260610_012518`，使用原 ZEUS-threshold timestep cache、原 block-group cache 和原 CFG threshold cache。旧实验结果表没有三类 cache 的 reuse/recompute 统计，因此下表只比较 time、speedup 和 PSNR。
+
+两组实验的 threshold metric 不同，threshold 数值不能横向比较；只比较最终质量和速度。
+
+| 质量区间 / 代表点 | 旧 merge 最快候选 | 旧 Speedup / PSNR | Sea-style 最快候选 | Sea-style Speedup / PSNR | 对比 |
+|---|---|---:|---|---:|---|
+| 最高有限 PSNR | `ts_0p005__bg_0p001__cfg_0p001` | `1.039x / 26.954 dB` | `sea_ts_0p05__sea_bg_0p10__sea_cfg_0p05` | `0.987x / 37.465 dB` | Sea-style 最高质量高约 `+10.51 dB`，但略慢于 baseline |
+| PSNR >= 26 dB | `ts_0p005__bg_0p001__cfg_0p001` | `1.039x / 26.954 dB` | `sea_ts_0p10__sea_bg_0p05__sea_cfg_0p20` | `1.208x / 26.430 dB` | 相近质量下 Sea-style 更快 |
+| PSNR >= 24 dB | `ts_0p005__bg_0p001__cfg_0p001` | `1.039x / 26.954 dB` | `sea_ts_0p20__sea_bg_0p20__sea_cfg_0p20` | `1.496x / 24.898 dB` | Sea-style 在 24-25 dB 区间速度明显更高 |
+| PSNR >= 22 dB | `ts_0p005__bg_0p015__cfg_0p03` | `1.204x / 23.448 dB` | `sea_ts_0p20__sea_bg_0p20__sea_cfg_0p20` | `1.496x / 24.898 dB` | Sea-style 同时更快且 PSNR 更高 |
+| PSNR >= 20 dB | `ts_0p005__bg_0p03__cfg_0p02` | `1.369x / 20.042 dB` | `sea_ts_0p20__sea_bg_0p20__sea_cfg_0p20` | `1.496x / 24.898 dB` | Sea-style 速度略高，质量高约 `+4.86 dB` |
+| PSNR >= 19 dB | `ts_0p005__bg_0p03__cfg_0p03` | `1.378x / 19.366 dB` | `sea_ts_0p40__sea_bg_0p10__sea_cfg_1p00` | `2.845x / 19.007 dB` | 相近低质量边界下 Sea-style 加速更强 |
+| PSNR >= 18 dB | `ts_0p6__bg_1__cfg_0p001` | `3.842x / 18.128 dB` | `sea_ts_1p00__sea_bg_0p05__sea_cfg_0p20` | `3.575x / 18.233 dB` | 旧 merge 略快，Sea-style PSNR 略高 |
+| PSNR >= 15 dB | `ts_0p6__bg_1__cfg_1` | `4.080x / 15.225 dB` | `sea_ts_1p00__sea_bg_1p00__sea_cfg_0p20` | `4.873x / 15.633 dB` | 激进低质量区间 Sea-style 更快且略高质量 |
+| 最快有限候选 | `ts_0p6__bg_1__cfg_1` | `4.080x / 15.225 dB` | `sea_ts_1p00__sea_bg_1p00__sea_cfg_1p00` | `5.644x / 11.914 dB` | Sea-style 上限速度更高，但最快点质量不可用 |
+
+简要结论：
+
+- Sea-style 三缓存在高质量区间优势明显：旧 merge 最高有限 PSNR 只有 `26.954 dB`，Sea-style 可到 `37.465 dB`。
+- 在 `22-26 dB` 之间，Sea-style 通常给出更好的速度/质量折中，典型点是 `sea_ts_0p20__sea_bg_0p20__sea_cfg_0p20`：`1.496x / 24.898 dB`。
+- 在 `18 dB` 附近，旧 merge 的激进组合速度略高，但 Sea-style 的质量略高。
+- 在 `15-16 dB` 的低质量速度优先区间，Sea-style 可以达到更高 speedup。
+
+### 3.7 完整结果表
 
 下表为 `125` 个候选的完整结果。为便于阅读，只保留 threshold、速度、PSNR 和三类 cache 的 reuse/recompute 统计；完整路径与详细 trace 见归档目录中的 `results/summary.csv`。
 

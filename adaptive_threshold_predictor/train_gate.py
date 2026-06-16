@@ -9,7 +9,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Subset
 
-from experiments.adaptive_threshold_predictor.data import (
+from adaptive_threshold_predictor.data import (
     CachedFeatureThresholdDataset,
     DATASET_MODES,
     DEFAULT_DATA_ROOT,
@@ -18,7 +18,7 @@ from experiments.adaptive_threshold_predictor.data import (
     collate_trace_steps,
     split_indices_by_sample_id,
 )
-from experiments.adaptive_threshold_predictor.models import (
+from adaptive_threshold_predictor.models import (
     CachedFeatureAdaCacheGate,
     ConditionOnlyAdaCacheGate,
     FEATURE_SETS,

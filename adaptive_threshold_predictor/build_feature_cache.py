@@ -9,13 +9,13 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
-from experiments.adaptive_threshold_predictor.data import (
+from adaptive_threshold_predictor.data import (
     DATASET_MODES,
     DEFAULT_DATA_ROOT,
     TraceStepThresholdDataset,
     collate_trace_steps,
 )
-from experiments.adaptive_threshold_predictor.models import FEATURE_SETS
+from adaptive_threshold_predictor.models import FEATURE_SETS
 
 
 def parse_args() -> argparse.Namespace:

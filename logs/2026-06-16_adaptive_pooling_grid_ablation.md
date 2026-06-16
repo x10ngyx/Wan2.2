@@ -9,7 +9,7 @@ Test whether a larger pooling grid improves the adaptive timestep-threshold pred
 Command:
 
 ```bash
-/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.adaptive_threshold_predictor.run_grid_ablation \
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.run_grid_ablation \
   --out_root /hy-tmp/wan22_adaptive_threshold_grid_ablation_20260616_020314 \
   --grids 2x4x4 3x4x4 4x4x4 \
   --epochs 3 \

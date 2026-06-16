@@ -5,8 +5,8 @@ from pathlib import Path
 
 import torch
 
-from experiments.adaptive_threshold_predictor.data import DEFAULT_DATA_ROOT
-from experiments.adaptive_threshold_predictor.models import (
+from adaptive_threshold_predictor.data import DEFAULT_DATA_ROOT
+from adaptive_threshold_predictor.models import (
     ImprovedAdaCacheGate,
     count_parameters,
 )

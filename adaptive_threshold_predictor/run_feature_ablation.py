@@ -6,8 +6,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from experiments.adaptive_threshold_predictor.data import DATASET_MODES
-from experiments.adaptive_threshold_predictor.models import FEATURE_SETS
+from adaptive_threshold_predictor.data import DATASET_MODES
+from adaptive_threshold_predictor.models import FEATURE_SETS
 
 
 def parse_args() -> argparse.Namespace:
@@ -46,7 +46,7 @@ def main() -> None:
         cmd = [
             args.python,
             "-m",
-            "experiments.adaptive_threshold_predictor.train_gate",
+            "adaptive_threshold_predictor.train_gate",
             "--dataset_mode",
             args.dataset_mode,
             "--feature_set",
