@@ -500,3 +500,177 @@ Superseded update:
   - `python -m json.tool test_sets/manifest.json` passed.
   - All JSONL files under `test_sets/` parsed successfully.
 - Follow-up AGENTS update: replaced the old OpenVid zip-only resource note with the unified prompt test set directory `/hy-tmp/work/Wan2.2/test_sets`; OpenVid-100 prompt files are now documented as `test_sets/openvid_100/`.
+
+## 2026-06-15 Adaptive Threshold Predictor Scaffold
+
+- Created `experiments/adaptive_threshold_predictor/` as the isolated workspace for prediction-network code.
+- Inspected `/hy-tmp/openvid_100_seacache_trace_data/data`; `manifest.json` reports 100 samples and 1000 SeaCache candidates.
+- Confirmed traced baseline step latent shape is `[16, 12, 60, 104]` in single-step `.pt` files, with `meta.pt` storing 50 timesteps.
+- Added timestep-cache-only `ImprovedAdaCacheGate`:
+  - Inputs: latent, timestep, target PSNR.
+  - Static branch: `AdaptiveAvgPool3d((2, 2, 2))` on latent.
+  - Dynamic branch: first-order absolute temporal difference plus the same pool.
+  - Condition branch: lightweight MLP over timestep and target PSNR.
+  - Output: one Sigmoid threshold in `[0, 1]`.
+  - Current default model has about 29K trainable parameters for 16 latent channels and hidden dim 64.
+- Added trace data utilities and a direct-threshold label builder for initial supervised training: for each sample and target PSNR, use the fastest threshold whose measured PSNR reaches the target, or the highest-PSNR threshold if unreachable.
+- Verified:
+  - `python -m experiments.adaptive_threshold_predictor.inspect_trace_data`
+  - `python -m experiments.adaptive_threshold_predictor.train_gate --epochs 1 --batch_size 2 --max_examples 8 --out_dir /hy-tmp/wan22_adaptive_threshold_predictor_smoke`
+- Smoke output saved under `/hy-tmp/wan22_adaptive_threshold_predictor_smoke`; no generation runner or cache core logic was changed.
+
+## 2026-06-15 Adaptive Feature Ablation Interface
+
+- Updated `ImprovedAdaCacheGate` so timestep and target PSNR are always input through the same condition branch, while exactly one latent-derived feature set is selected for comparison.
+- Kept the prediction head and latent feature output dimension fixed across feature sets, so validation-loss differences reflect feature information rather than architecture size.
+- Supported feature sets:
+  - `latent_pool`
+  - `temporal_mean`
+  - `temporal_var`
+  - `frame_diff_mean`
+  - `frame_diff_var`
+- Added `--feature_set` to `experiments.adaptive_threshold_predictor.train_gate`.
+- Added `experiments.adaptive_threshold_predictor.run_feature_ablation` to run all feature sets and write `feature_ablation_summary.json`.
+- Smoke validation:
+  - `/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.adaptive_threshold_predictor.run_feature_ablation --epochs 1 --batch_size 2 --max_examples 10 --device cpu --out_root /hy-tmp/wan22_adaptive_threshold_feature_ablation_smoke`
+  - All five feature sets had the same trainable parameter count (`21057`) and completed forward/backward/save.
+  - The smoke run is only a functionality check, not a quantitative conclusion because it used 10 examples and 1 epoch.
+
+## 2026-06-16 Adaptive Predictor Split And Conditioning Update
+
+- Updated adaptive predictor training to split train/validation by `sample_id`; all step/target-PSNR examples from the same sample now stay on the same side of the split.
+- Changed timestep conditioning to use 50-step denoising progress rather than raw scheduler timestep:
+  - dataset now passes `step_index / (num_steps - 1)`, so the input is already in `[0, 1]`.
+  - model now clamps timestep input to `[0, 1]` instead of dividing by `1000`.
+- Kept the current sample-level oracle label construction unchanged by request.
+- Did not add high/low stage conditioning and did not add optical-flow features.
+- Updated `ImprovedAdaCacheGate` with a fixed `feature_proj`:
+  - selected latent-derived feature is pooled and projected to `hidden_dim`;
+  - condition embedding remains `hidden_dim`;
+  - prediction head always receives `2 * hidden_dim`, keeping the downstream architecture fixed across feature sets and grid-size experiments.
+- Validation:
+  - `python -m py_compile experiments/adaptive_threshold_predictor/models.py experiments/adaptive_threshold_predictor/data.py experiments/adaptive_threshold_predictor/train_gate.py experiments/adaptive_threshold_predictor/inspect_trace_data.py experiments/adaptive_threshold_predictor/run_feature_ablation.py`
+  - group split smoke check with `max_examples=120`: train/val sample overlap was `0`, first timestep fraction was `0.0`.
+  - feature-ablation smoke run completed on CPU with `max_examples=60`; all five feature sets had identical parameter count (`29377`).
+  - Smoke output: `/hy-tmp/wan22_adaptive_threshold_feature_ablation_smoke_v2/feature_ablation_summary.json`.
+
+## 2026-06-16 Adaptive Predictor Full-Step Default
+
+- Changed direct-threshold dataset defaults to use all 50 denoising steps instead of 7 sampled steps.
+- Current direct-threshold example count is `100 samples * 6 target_psnr values * 50 steps = 30000`.
+- Clarified that `100 * 10 * 50 = 50000` corresponds to a different candidate/metric-prediction formulation where each measured threshold candidate is also an input row; the current direct-threshold formulation selects one oracle threshold per `sample_id + target_psnr`.
+- Exposed PSNR normalization bounds in training scripts:
+  - `--psnr_min`, default `10.0`
+  - `--psnr_max`, default `50.0`
+- Current condition normalization:
+  - `timestep = step_index / 49`
+  - `target_psnr_norm = clamp((target_psnr - psnr_min) / (psnr_max - psnr_min), 0, 1)`
+- Verified default dataset construction:
+  - examples: `30000`
+  - train/val examples: `24000/6000`
+  - train/val samples: `80/20`
+  - train/val sample overlap: `0`
+- Smoke training passed:
+  - `/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.adaptive_threshold_predictor.train_gate --feature_set latent_pool --epochs 1 --batch_size 2 --max_examples 20 --device cpu --out_dir /hy-tmp/wan22_adaptive_threshold_train_smoke_v3`
+
+## 2026-06-16 Candidate-Inverse Dataset Mode
+
+- Added `candidate_inverse` dataset mode and made it the default for adaptive threshold predictor training.
+- `candidate_inverse` rows are built from each measured SeaCache threshold candidate and each denoising step:
+  - input latent: `data/seacache/step_inputs/<threshold_label>/<sample_id>/step_*.pt`
+  - input timestep: `step_index / 49`
+  - input target PSNR: the candidate run's achieved `mean_psnr`
+  - label: the threshold used by that candidate run
+- Kept `target_oracle` mode available for comparison.
+- Verified default dataset construction:
+  - mode: `candidate_inverse`
+  - examples: `50000`
+  - train/val examples: `40000/10000`
+  - train/val samples: `80/20`
+  - train/val sample overlap: `0`
+  - each of the 10 thresholds contributes `5000` examples.
+- Smoke training passed:
+  - `/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.adaptive_threshold_predictor.train_gate --epochs 1 --batch_size 2 --max_examples 30 --device cpu --out_dir /hy-tmp/wan22_adaptive_threshold_candidate_inverse_smoke`
+
+## 2026-06-16 Adaptive Feature Cache And First Ablation
+
+- Raw latent training was too slow because it repeatedly opened 50,000 step `.pt` files.
+- Added cached feature support:
+  - `experiments/adaptive_threshold_predictor/build_feature_cache.py`
+  - `CachedFeatureThresholdDataset`
+  - `CachedFeatureAdaCacheGate`
+  - `--cache_dir` support in `train_gate.py` and `run_feature_ablation.py`.
+- Built full candidate-inverse feature cache:
+  - cache root: `/hy-tmp/wan22_adaptive_threshold_feature_cache_candidate_inverse_20260616_012409`
+  - examples: `50000`
+  - feature sets: `latent_pool`, `temporal_mean`, `temporal_var`, `frame_diff_mean`, `frame_diff_var`
+  - each feature tensor shape: `[50000, 128]`
+  - total cache size: about `124M`
+  - elapsed: `300.38s`
+- Ran cached five-feature ablation:
+  - result root: `/hy-tmp/wan22_adaptive_threshold_feature_ablation_cached_20260616_012409`
+  - dataset mode: `candidate_inverse`
+  - split: group by `sample_id`, `80/20` samples
+  - epochs: `3`
+  - batch size: `256`
+  - hidden dim: `64`
+  - all models: `29377` trainable parameters
+  - saved per-feature `config.json`, `split.json`, `best_model.pt`, `final_model.pt`, `metrics.json`, and `val_predictions.csv`.
+- Best validation-loss ranking:
+  - `temporal_mean`: best epoch `2`, val loss `0.012259`, val MAE `0.120107`
+  - `latent_pool`: best epoch `2`, val loss `0.012755`, val MAE `0.116558`
+  - `frame_diff_mean`: best epoch `3`, val loss `0.014569`, val MAE `0.132957`
+  - `temporal_var`: best epoch `1`, val loss `0.014595`, val MAE `0.129695`
+  - `frame_diff_var`: best epoch `2`, val loss `0.014659`, val MAE `0.131198`
+- Summary files:
+  - `/hy-tmp/wan22_adaptive_threshold_feature_ablation_cached_20260616_012409/feature_ablation_summary.csv`
+  - `/hy-tmp/wan22_adaptive_threshold_feature_ablation_cached_20260616_012409/feature_ablation_summary.json`
+  - `/hy-tmp/wan22_adaptive_threshold_feature_ablation_cached_20260616_012409/feature_ablation_best_summary.csv`
+  - `/hy-tmp/wan22_adaptive_threshold_feature_ablation_cached_20260616_012409/feature_ablation_best_summary.json`
+
+## 2026-06-16 Adaptive Threshold Predictor Pooling Grid Ablation
+
+- Continued timestep-threshold predictor work under `experiments/adaptive_threshold_predictor/`.
+- Ran larger pooling-grid ablation for cached candidate-inverse training:
+  - output root: `/hy-tmp/wan22_adaptive_threshold_grid_ablation_20260616_020314`
+  - grids: `2x4x4`, `3x4x4`, `4x4x4`
+  - dataset mode: `candidate_inverse`
+  - train/val split: grouped by `sample_id`
+  - examples: `50000` total, `40000` train, `10000` val
+  - epochs: `3`
+  - batch size: `256`
+  - feature sets: `latent_pool`, `temporal_mean`, `temporal_var`, `frame_diff_mean`, `frame_diff_var`
+- Built one feature cache per grid:
+  - `2x4x4`: feature dim `512`, model params `53953`
+  - `3x4x4`: feature dim `768`, model params `70337`
+  - `4x4x4`: feature dim `1024`, model params `86721`
+- Summary tables:
+  - `/hy-tmp/wan22_adaptive_threshold_grid_ablation_20260616_020314/grid_feature_ablation_best_summary.csv`
+  - `/hy-tmp/wan22_adaptive_threshold_grid_ablation_20260616_020314/grid_feature_ablation_best_summary.json`
+- Best validation-loss results compared with the existing `2x2x2` cache:
+  - `2x2x2 temporal_mean`: best val loss `0.012259`, val MAE `0.120107`, params `29377`
+  - `2x4x4 latent_pool`: best val loss `0.012434`, val MAE `0.118093`, params `53953`
+  - `4x4x4 latent_pool`: best val loss `0.012733`, val MAE `0.118652`, params `86721`
+  - `2x2x2 latent_pool`: best val loss `0.012755`, val MAE `0.116558`, params `29377`
+  - `3x4x4 temporal_mean`: best val loss `0.013236`, val MAE `0.124000`, params `70337`
+- Current takeaway: increasing the pooling grid did not improve best validation loss in this 3-epoch single-split run. `2x4x4 latent_pool` is close and has slightly lower MAE than the best `2x2x2 temporal_mean`, but the larger grids show more early overfitting and higher parameter count. Keep `2x2x2 temporal_mean` as the current loss-based default unless a longer/multi-seed run changes the ranking.
+
+## 2026-06-16 Adaptive Predictor Control Baselines
+
+- Added control modes to `experiments/adaptive_threshold_predictor/train_gate.py`:
+  - `--control_mode condition_only`: use only normalized timestep and normalized PSNR, no latent-derived feature branch.
+  - `--control_mode noise_feature`: keep the cached-feature architecture but replace the feature tensor with random noise.
+- Added `ConditionOnlyAdaCacheGate` in `experiments/adaptive_threshold_predictor/models.py`.
+- Ran both controls on the existing `2x2x2` candidate-inverse cache:
+  - cache: `/hy-tmp/wan22_adaptive_threshold_feature_cache_candidate_inverse_20260616_012409`
+  - output root: `/hy-tmp/wan22_adaptive_threshold_controls_20260616`
+  - epochs: `3`
+  - batch size: `256`
+  - split: same grouped-by-sample-id seed/default as previous runs.
+- Control results:
+  - `noise_feature`: params `29377`, best epoch `1`, best val loss `0.014648`, best val MAE `0.131173`
+  - `condition_only`: params `12865`, best epoch `3`, best val loss `0.014652`, best val MAE `0.128916`
+- Comparison with the best real-feature `2x2x2` result:
+  - `temporal_mean`: params `29377`, best epoch `2`, best val loss `0.012259`, best val MAE `0.120107`
+  - `latent_pool`: params `29377`, best epoch `2`, best val loss `0.012755`, best val MAE `0.116558`
+- Current takeaway: timestep+PSNR alone already explains much of the threshold label structure, but the best real latent-derived features improve validation loss by about `13%` to `16%` relative to the no-information controls. Three epochs should not be described as full convergence; train loss kept decreasing while validation loss for real features started rising after epoch 1/2, so current runs are short early-stopping comparisons rather than final converged training.
