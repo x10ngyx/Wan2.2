@@ -1,0 +1,35 @@
+/hy-tmp/work/Wan2.2/adaptive_threshold_predictor/data.py:251: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  self.features = torch.load(feature_path, map_location="cpu").float()
+/hy-tmp/work/Wan2.2/adaptive_threshold_predictor/data.py:252: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  metadata = torch.load(metadata_path, map_location="cpu")
+{"epoch": 1, "train_loss": 0.018059992653131483, "val_loss": 0.014824857240915298, "val_mae": 0.132123006272316}
+{"epoch": 2, "train_loss": 0.010417532035708428, "val_loss": 0.015107378455996513, "val_mae": 0.12907447628974913}
+{"epoch": 3, "train_loss": 0.010368807522952557, "val_loss": 0.014661833672225476, "val_mae": 0.12921436266899108}
+{"epoch": 4, "train_loss": 0.010340951873362064, "val_loss": 0.014640614315867424, "val_mae": 0.12902341306209564}
+{"epoch": 5, "train_loss": 0.010346923673152923, "val_loss": 0.014542098340392112, "val_mae": 0.12954324452877045}
+{"epoch": 6, "train_loss": 0.010332620242238045, "val_loss": 0.01452262946665287, "val_mae": 0.1301269572496414}
+{"epoch": 7, "train_loss": 0.010341546288132667, "val_loss": 0.014704281908273697, "val_mae": 0.12938214683532714}
+{"epoch": 8, "train_loss": 0.010312604928016663, "val_loss": 0.014550806520879268, "val_mae": 0.12884946904182434}
+{"epoch": 9, "train_loss": 0.010354910749197007, "val_loss": 0.014503434671461582, "val_mae": 0.12953818883895873}
+{"epoch": 10, "train_loss": 0.01032483127117157, "val_loss": 0.01452635195106268, "val_mae": 0.1294411358833313}
+{"epoch": 11, "train_loss": 0.010335818146169186, "val_loss": 0.01459195870012045, "val_mae": 0.1289314659357071}
+{"epoch": 12, "train_loss": 0.010305683836340904, "val_loss": 0.014678512466698886, "val_mae": 0.13069795298576356}
+{"epoch": 13, "train_loss": 0.010338193695247173, "val_loss": 0.014511545559763908, "val_mae": 0.12868989853858948}
+{"epoch": 14, "train_loss": 0.010307308772206307, "val_loss": 0.014465936687588691, "val_mae": 0.12905171518325806}
+{"epoch": 15, "train_loss": 0.010303938375413418, "val_loss": 0.014429497390985488, "val_mae": 0.1288997443675995}
+{"epoch": 16, "train_loss": 0.010324474877119065, "val_loss": 0.014493842622637748, "val_mae": 0.1281209452152252}
+{"epoch": 17, "train_loss": 0.010295770812034607, "val_loss": 0.014471975900232793, "val_mae": 0.12885158915519715}
+{"epoch": 18, "train_loss": 0.010294676041603088, "val_loss": 0.014337420183420182, "val_mae": 0.12869054942131042}
+{"epoch": 19, "train_loss": 0.010293727631866931, "val_loss": 0.01438482067734003, "val_mae": 0.12776347222328185}
+{"epoch": 20, "train_loss": 0.010275335535407066, "val_loss": 0.014236185979843139, "val_mae": 0.12782521390914917}
+{"epoch": 21, "train_loss": 0.010287322482466698, "val_loss": 0.014355411843955517, "val_mae": 0.127937877368927}
+{"epoch": 22, "train_loss": 0.010277519105374814, "val_loss": 0.014187508548796177, "val_mae": 0.1261347280025482}
+{"epoch": 23, "train_loss": 0.010260578268766403, "val_loss": 0.0142855371594429, "val_mae": 0.12612971765995026}
+{"epoch": 24, "train_loss": 0.010259115308523178, "val_loss": 0.014074119867384433, "val_mae": 0.1257732707977295}
+{"epoch": 25, "train_loss": 0.01025149494111538, "val_loss": 0.014181695897132158, "val_mae": 0.127849840593338}
+{"epoch": 26, "train_loss": 0.010235718560218812, "val_loss": 0.014024558083713055, "val_mae": 0.12575547730922698}
+{"epoch": 27, "train_loss": 0.010253878870606423, "val_loss": 0.01429675680398941, "val_mae": 0.12704462151527404}
+{"epoch": 28, "train_loss": 0.010225374472141266, "val_loss": 0.01404400057643652, "val_mae": 0.12587810907363892}
+{"epoch": 29, "train_loss": 0.010241253226995468, "val_loss": 0.014255217633396386, "val_mae": 0.12707292051315308}
+{"epoch": 30, "train_loss": 0.010236902175843715, "val_loss": 0.014143064489215613, "val_mae": 0.12832214410305023}
+saved: /hy-tmp/wan22_adaptive_threshold_condition_only_hdim16_20260616

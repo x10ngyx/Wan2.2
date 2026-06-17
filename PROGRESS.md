@@ -258,6 +258,51 @@ Superseded update:
 ## 2026-06-16 Report: Sea CFG Cache vs Original CFG Cache on Ali Prompt 1
 
 - Added `reports/report_cfg_cache_sea_vs_old_prompt01.md` as the second reader-facing Chinese experiment report.
+
+## 2026-06-16 TaylorSeer Third-Party Move And Multi-GPU Prep
+
+- Moved the standalone TaylorSeer Wan2.2 integration from top-level `taylorseer_wan22/` to `third_party/taylorseer_wan22/`.
+- Added `third_party/__init__.py` so the runner can be launched as a module:
+  - `/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m third_party.taylorseer_wan22.generate_t2v --help`
+- Added `third_party/taylorseer_wan22/README.md` with the official-logic alignment notes, Wan2.2 high/low-stage adaptation, and single/multi-GPU launch examples.
+- Updated the standalone runner for future multi-GPU use:
+  - supports `torchrun`;
+  - supports `--ulysses_size <world_size>`;
+  - supports `--dit_fsdp` and `--t5_fsdp`;
+  - multi-GPU default follows main Wan2.2 behavior by using `offload_model=False` when not explicitly set;
+  - rank 0 only saves the output video.
+- Updated TaylorSeer patching to handle FSDP-wrapped models by patching the underlying module.
+- Current status of the two requested confirmations:
+  - Official logic: the third-party implementation follows the public TaylorSeer-Wan2.1 block-level logic: cond stream decides full/Taylor step type, uncond follows it, stream caches are separate, and each full step caches self-attention/cross-attention/FFN module outputs for Taylor prediction. Wan2.2 high/low denoisers are kept as separate cache states; this is a required adaptation because Wan2.2 T2V-A14B uses two denoisers.
+  - Multi-GPU: the code path supports torchrun + Ulysses sequence parallel + FSDP for future multi-GPU experiments. This machine currently has no visible GPU, so multi-GPU runtime validation is still pending on the target multi-GPU machine.
+- Validation completed on this machine:
+  - `/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m py_compile third_party/__init__.py third_party/taylorseer_wan22/__init__.py third_party/taylorseer_wan22/cache.py third_party/taylorseer_wan22/patch.py third_party/taylorseer_wan22/text2video.py third_party/taylorseer_wan22/generate_t2v.py`
+  - `/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m third_party.taylorseer_wan22.generate_t2v --help`
+  - `rg -n "TaylorSeer|taylorseer" generate.py wan/text2video.py wan/timestep_cache.py wan/modules/model.py` returned no matches; main Wan2.2 cache code remains isolated from TaylorSeer.
+
+## 2026-06-16 TaylorSeer VBench Batch Experiment Scripts
+
+- Added experiment runner directory:
+  - `experiments/taylorseer_vbench_50step_45f_480p/`
+- Added files:
+  - `experiments/__init__.py`
+  - `experiments/taylorseer_vbench_50step_45f_480p/__init__.py`
+  - `experiments/taylorseer_vbench_50step_45f_480p/run_batch.py`
+  - `experiments/taylorseer_vbench_50step_45f_480p/run_tmux.sh`
+  - `experiments/taylorseer_vbench_50step_45f_480p/README.md`
+- Runner purpose:
+  - Run standalone `third_party.taylorseer_wan22` on `test_sets/vbench_every20/prompts.jsonl`.
+  - Use project defaults: `t2v-A14B`, `/hy-tmp/models/Wan2.2-T2V-A14B`, seed `42`, `832*480`, `45` frames, `50` DPM++ steps.
+  - Load the Wan2.2/TaylorSeer pipeline once per process and run selected VBench prompts sequentially.
+  - Reset TaylorSeer cache at the start of every generated sample so prompts do not share module-output cache state.
+  - Support multi-GPU `torchrun` with `--ulysses_size`, `--dit_fsdp`, and `--t5_fsdp`.
+- Archive behavior:
+  - Writes videos, per-sample logs, command records, ffprobe JSON, `results/summary.csv`, `results/summary.json`, failed records, `experiment_config.json`, `launch.env`, `gpu.txt`, and `runner.log`.
+  - This TaylorSeer-only VBench runner does not generate no-cache baselines; PSNR and speedup fields are intentionally blank with an explanatory note. Generate a separate no-cache baseline run if PSNR/speedup is required.
+- Validation completed on this machine:
+  - `/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m py_compile experiments/__init__.py experiments/taylorseer_vbench_50step_45f_480p/__init__.py experiments/taylorseer_vbench_50step_45f_480p/run_batch.py third_party/taylorseer_wan22/cache.py third_party/taylorseer_wan22/text2video.py third_party/taylorseer_wan22/generate_t2v.py`
+  - `/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.taylorseer_vbench_50step_45f_480p.run_batch --cpu_validate --prompt_limit 2`
+  - `/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m experiments.taylorseer_vbench_50step_45f_480p.run_batch --help`
 - The report compares CFG-only `--cfg_cache threshold` against SeaCache-style `--cfg_cache sea-threshold` on Ali prompt 1.
 - Included shared generation settings, CFG cache parameter settings, archive roots, result tables with speedup/PSNR/reuse counts, per-stage CFG reuse counts, and a short conclusion.
 - No new inference or PSNR jobs were launched; all numbers were taken from `/hy-tmp/wan22_cfg_cache_prompt01_50step_45f_480p_20260613_163243`.
@@ -810,3 +855,275 @@ Update:
   - to `adaptive_threshold_predictor.*`
 - Updated `adaptive_threshold_predictor/README.md` to describe the package as top-level adaptive threshold work.
 - Removed generated `__pycache__` files during the move.
+
+## 2026-06-16 Adaptive Predictor Long Feature Training
+
+- Reran the two main adaptive predictor feature settings for longer training to check whether the epoch-2 best loss was a short-run fluctuation.
+- Command root:
+  - `/hy-tmp/wan22_adaptive_threshold_feature_ablation_long_20260616`
+- Full stdout log:
+  - `logs/2026-06-16_adaptive_feature_ablation_long_train.log`
+- Configuration matched the earlier short ablation except for longer training:
+  - `candidate_inverse`
+  - cached features from `/hy-tmp/wan22_adaptive_threshold_feature_cache_candidate_inverse_20260616_012409`
+  - feature sets: `temporal_mean`, `latent_pool`
+  - `2x2x2` pooled feature dim `128`
+  - hidden dim `64`
+  - batch size `256`
+  - split seed `42`
+  - train/val examples: `40000/10000`
+  - epochs: `30`
+- Results:
+  - `temporal_mean`: best val loss moved to epoch `1`, val loss `0.012571`, val MAE `0.119452`; best val MAE at epoch `2`, val MAE `0.119011`; epoch-30 val loss `0.019334`, val MAE `0.143876`.
+  - `latent_pool`: best val loss at epoch `3`, val loss `0.012612`, val MAE `0.121387`; best val MAE at epoch `2`, val MAE `0.117695`; epoch-30 val loss `0.023170`, val MAE `0.155156`.
+- Takeaway:
+  - The longer curves do not indicate late convergence after epoch 2. Training loss keeps decreasing, while validation loss rises after the first few epochs for both settings, so the earlier best-at-epoch-2 behavior is best interpreted as early overfitting / early-stopping behavior rather than a model that needed more epochs to converge.
+  - `temporal_mean` remains the safer loss-based default; `latent_pool` still has slightly better early best MAE but worse validation-loss stability.
+
+## 2026-06-16 Adaptive Predictor Hidden Dim 16 Test
+
+- Reran the same two feature settings with a smaller predictor capacity:
+  - output root: `/hy-tmp/wan22_adaptive_threshold_feature_ablation_hdim16_20260616`
+  - full stdout log: `logs/2026-06-16_adaptive_feature_ablation_hdim16_train.log`
+  - `hidden_dim`: `16`
+  - parameters: `3505`
+  - epochs: `30`
+  - all other data/split/cache settings matched the `hidden_dim=64` long run.
+- Best-checkpoint results:
+  - `temporal_mean`: best val loss epoch `4`, val loss `0.012254`, val MAE `0.119388`; best val MAE epoch `3`, val MAE `0.119104`; epoch-30 val loss `0.021120`, val MAE `0.151698`.
+  - `latent_pool`: best val loss epoch `4`, val loss `0.012473`, val MAE `0.121571`; best val MAE epoch `3`, val MAE `0.118758`; epoch-30 val loss `0.018201`, val MAE `0.144731`.
+- Comparison to `hidden_dim=64` long run:
+  - `temporal_mean` best val loss improved from `0.012571` to `0.012254`.
+  - `latent_pool` best val loss improved from `0.012612` to `0.012473`.
+  - `latent_pool` epoch-30 val loss improved from `0.023170` to `0.018201`, so reducing capacity reduced late overfitting for this feature.
+  - Early overfitting still remains: validation loss improves for the first few epochs, then rises while training loss continues decreasing.
+- Takeaway:
+  - Capacity was likely too high for the current grouped-sample supervision. `hidden_dim=16` is a better short-term default candidate than `hidden_dim=64`, but it still needs early stopping and ideally multi-seed validation.
+
+## 2026-06-16 Adaptive Predictor Hidden Dim 8 Test
+
+- Reran the same two feature settings with an even smaller predictor:
+  - output root: `/hy-tmp/wan22_adaptive_threshold_feature_ablation_hdim8_20260616`
+  - full stdout log: `logs/2026-06-16_adaptive_feature_ablation_hdim8_train.log`
+  - `hidden_dim`: `8`
+  - parameters: `1433`
+  - epochs: `30`
+  - all other data/split/cache settings matched the `hidden_dim=64` and `hidden_dim=16` long runs.
+- Best-checkpoint results:
+  - `temporal_mean`: best val loss epoch `6`, val loss `0.013240`, val MAE `0.122773`; best val MAE epoch `8`, val MAE `0.121107`; epoch-30 val loss `0.019828`, val MAE `0.144768`.
+  - `latent_pool`: best val loss epoch `4`, val loss `0.013039`, val MAE `0.120766`; epoch-30 val loss `0.016017`, val MAE `0.132199`.
+- Three-capacity comparison:
+  - `hidden_dim=64`: best val loss `0.012571` (`temporal_mean`), `0.012612` (`latent_pool`); params `29377`.
+  - `hidden_dim=16`: best val loss `0.012254` (`temporal_mean`), `0.012473` (`latent_pool`); params `3505`.
+  - `hidden_dim=8`: best val loss `0.013240` (`temporal_mean`), `0.013039` (`latent_pool`); params `1433`.
+- Takeaway:
+  - `hidden_dim=8` reduces late overfitting, especially for `latent_pool`, but best validation loss gets worse than `hidden_dim=16`.
+  - Current capacity sweet spot among tested values is `hidden_dim=16`; `hidden_dim=8` looks under-capacity for best loss, while `hidden_dim=64` overfits faster.
+
+## 2026-06-16 Adaptive Predictor Condition-only Comparison
+
+- Reran condition-only controls for the same long-training setup and hidden dimensions:
+  - roots:
+    - `/hy-tmp/wan22_adaptive_threshold_condition_only_hdim64_20260616`
+    - `/hy-tmp/wan22_adaptive_threshold_condition_only_hdim16_20260616`
+    - `/hy-tmp/wan22_adaptive_threshold_condition_only_hdim8_20260616`
+  - stdout logs:
+    - `logs/2026-06-16_adaptive_condition_only_hdim64_train.log`
+    - `logs/2026-06-16_adaptive_condition_only_hdim16_train.log`
+    - `logs/2026-06-16_adaptive_condition_only_hdim8_train.log`
+  - same cached dataset/split, `30` epochs, batch size `256`.
+  - condition-only model uses timestep and target PSNR only; cached feature loading is only used to reuse the same dataset metadata/split.
+- Best validation results:
+  - `condition_only`, hdim `64`: params `12865`, best val loss `0.013834`, best val MAE `0.125093`.
+  - `condition_only`, hdim `16`: params `913`, best val loss `0.014025`, best val MAE `0.125755`.
+  - `condition_only`, hdim `8`: params `265`, best val loss `0.014505`, best val MAE `0.128548`.
+- Feature-model improvement over same-hidden-dim condition-only:
+  - hdim `64`, `temporal_mean`: best val loss improves `9.12%`; best MAE improves `4.86%`.
+  - hdim `64`, `latent_pool`: best val loss improves `8.83%`; best MAE improves `5.91%`.
+  - hdim `16`, `temporal_mean`: best val loss improves `12.63%`; best MAE improves `5.29%`.
+  - hdim `16`, `latent_pool`: best val loss improves `11.07%`; best MAE improves `5.56%`.
+  - hdim `8`, `temporal_mean`: best val loss improves `8.72%`; best MAE improves `5.79%`.
+  - hdim `8`, `latent_pool`: best val loss improves `10.11%`; best MAE improves `6.05%`.
+- Takeaway:
+  - Latent-derived features do add real validation signal beyond timestep + target PSNR, with consistent best-checkpoint gains across capacities.
+  - Condition-only is more stable late in training, while feature models overfit earlier. Use feature models with early stopping, and compare best checkpoint rather than last epoch.
+  - Current strongest single-split setting remains hdim `16` + `temporal_mean` by best val loss.
+
+## 2026-06-16 Adaptive SeaCache Inference Prototype
+
+- Added standalone adaptive SeaCache inference prototype under `adaptive_seacache_wan22/`.
+- No main Wan files were modified.
+- New files:
+  - `adaptive_seacache_wan22/__init__.py`
+  - `adaptive_seacache_wan22/cache.py`
+  - `adaptive_seacache_wan22/patch.py`
+  - `adaptive_seacache_wan22/generate_t2v.py`
+  - `adaptive_seacache_wan22/README.md`
+- Intended mode:
+  - T2V timestep-only SeaCache.
+  - User supplies `--target_psnr`.
+  - At each SeaCache decision, the adaptive predictor predicts a threshold from the current raw latent and denoising step fraction.
+  - SeaCache uses that threshold for the current step only.
+- Implementation details:
+  - The script monkey-patches `wan.text2video.SeaCacheTimestepCache` in the current process to construct `AdaptiveSeaCacheTimestepCache`.
+  - It wraps `WanModel.forward` in the current process so the adaptive cache can access the current raw latent. This is needed because the native SeaCache hook receives model-internal token features, while the adaptive predictor was trained from raw latent pooled features.
+  - Online feature extraction mirrors `adaptive_threshold_predictor/build_feature_cache.py` for `temporal_mean` and `latent_pool`.
+  - The default recommended model is `/hy-tmp/wan22_adaptive_threshold_feature_ablation_hdim16_20260616/temporal_mean/best_model.pt`.
+- Validation:
+  - `python -m py_compile adaptive_seacache_wan22/cache.py adaptive_seacache_wan22/patch.py adaptive_seacache_wan22/generate_t2v.py` passed.
+  - Lightweight smoke loaded the hdim16 temporal_mean checkpoint and predicted thresholds from fake raw latents.
+  - Smoke confirmed `AdaptiveSeaCacheTimestepCache.summary()` records `adaptive_threshold_path`.
+  - CLI parse smoke passed for a realistic 832x480/45f/50step T2V command.
+- Real Wan generation was not launched yet in this session. First real test should use the command in `adaptive_seacache_wan22/README.md`, ideally with `target_psnr=25` and baseline/SeaCache comparison artifacts recorded.
+
+## 2026-06-16 Adaptive SeaCache Ali Prompt 1-2 Run
+
+- Added batch runner:
+  - `experiments/adaptive_seacache_ali_prompt12_50step_45f_480p/run_batch.py`
+  - `experiments/adaptive_seacache_ali_prompt12_50step_45f_480p/run_tmux.sh`
+  - `experiments/adaptive_seacache_ali_prompt12_50step_45f_480p/README.md`
+- Runner scope:
+  - prompts: Ali prompt 1 and 2 from `test_sets/ali_10/prompts.txt`
+  - targets: `20`, `25`, `30`
+  - method: timestep-only adaptive SeaCache
+  - model: hdim16 `temporal_mean` best checkpoint
+  - single-process WanT2V pipeline load
+  - baseline artifacts reused from `/hy-tmp/wan22_zeus_threshold_reuse_interp_10prompt_5th_20260608_195427`
+- Trace archiving:
+  - per-candidate JSON and CSV under `traces/target_<value>/prompt_<NN>.*`
+  - fields include `step_index`, `model_stage`, `branch`, `predicted_threshold`, `rel_l1`, `accumulated_rel_l1`, `decision`, and `force_recompute`.
+- Validation before launch:
+  - `py_compile` passed for the adaptive cache and runner.
+  - CPU validation passed: `2` prompts, `3` target PSNRs, `6` candidate runs, baseline artifacts present.
+- Launched tmux session:
+  - session: `adaptive_seacache_ali12`
+  - experiment root: `/hy-tmp/wan22_adaptive_seacache_ali_prompt12_50step_45f_480p_20260616_165412`
+  - runner log: `/hy-tmp/wan22_adaptive_seacache_ali_prompt12_50step_45f_480p_20260616_165412/logs/runner.log`
+- Initial log check showed the adaptive gate loaded successfully. The run was still in progress at this checkpoint.
+
+Completion update:
+
+- The tmux session finished and exited.
+- Completed `6/6` adaptive SeaCache candidates.
+- Failed files: `0`.
+- Result table:
+  - `/hy-tmp/wan22_adaptive_seacache_ali_prompt12_50step_45f_480p_20260616_165412/results/summary.csv`
+  - `/hy-tmp/wan22_adaptive_seacache_ali_prompt12_50step_45f_480p_20260616_165412/results/summary.json`
+- All generated and baseline videos validated as `832x480`, `45` frames, duration `2.8125s`, avg frame rate `16/1`.
+- Summary:
+  - `ali_001`, target `20`: speedup `2.870x`, PSNR `19.325 dB`, reuse/recompute `72/28`, mean predicted threshold `0.5330`.
+  - `ali_001`, target `25`: speedup `1.869x`, PSNR `19.450 dB`, reuse/recompute `52/48`, mean predicted threshold `0.2819`.
+  - `ali_001`, target `30`: speedup `1.543x`, PSNR `24.462 dB`, reuse/recompute `40/60`, mean predicted threshold `0.1809`.
+  - `ali_002`, target `20`: speedup `3.051x`, PSNR `20.288 dB`, reuse/recompute `74/26`, mean predicted threshold `0.6230`.
+  - `ali_002`, target `25`: speedup `2.270x`, PSNR `26.998 dB`, reuse/recompute `62/38`, mean predicted threshold `0.3777`.
+  - `ali_002`, target `30`: speedup `1.641x`, PSNR `29.354 dB`, reuse/recompute `44/56`, mean predicted threshold `0.2126`.
+
+Fixed SeaCache comparison update:
+
+- Compared adaptive results against prior fixed-threshold SeaCache runs:
+  - prompt 01 fixed root: `/hy-tmp/wan22_seacache_50step_45f_480p_20260611_191733`
+  - prompt 02 fixed roots:
+    - `/hy-tmp/wan22_seacache_prompt02_dense_20260611_204826`
+    - `/hy-tmp/wan22_seacache_prompt02_highthr_20260612_000218`
+- Nearest fixed-threshold comparisons:
+  - `ali_001`, target `20`: adaptive `19.325 dB`, `2.870x`; nearest fixed is threshold `0.50`, `19.460 dB`, `2.779x`.
+  - `ali_001`, target `25`: adaptive `19.450 dB`, `1.869x`; nearest PSNR fixed is threshold `0.50`, `19.460 dB`, `2.779x`; nearest speed fixed is threshold `0.30`, `20.562 dB`, `1.966x`. This adaptive point is dominated by fixed SeaCache.
+  - `ali_001`, target `30`: adaptive `24.462 dB`, `1.543x`; nearest fixed is threshold `0.20`, `24.558 dB`, `1.569x`.
+  - `ali_002`, target `20`: adaptive `20.288 dB`, `3.051x`; nearest fixed is threshold `0.60`, `20.262 dB`, `3.098x`.
+  - `ali_002`, target `25`: adaptive `26.998 dB`, `2.270x`; nearest fixed is threshold `0.40`, `27.044 dB`, `2.405x`.
+  - `ali_002`, target `30`: adaptive `29.354 dB`, `1.641x`; nearest PSNR fixed is threshold `0.30`, `29.582 dB`, `1.965x`; nearest speed fixed is threshold `0.20`, `30.097 dB`, `1.562x`.
+- Takeaway:
+  - Adaptive thresholding mostly lands near fixed-threshold SeaCache operating points, which confirms the predicted thresholds drive SeaCache in the expected direction.
+  - It does not yet dominate fixed threshold sweeps. The most concerning point is `ali_001 target=25`, where adaptive is much slower than fixed threshold `0.50` at nearly identical PSNR and worse than fixed threshold `0.30` in both speed and PSNR.
+  - Prompt 02 is better calibrated than prompt 01, but fixed threshold `0.40`/`0.60` remain slightly better at comparable quality/speed.
+
+## 2026-06-16 AdaCache-DiT Method Review
+
+- Cloned and reviewed the official AdaCache-DiT/AdaCache repository under `/hy-tmp/work/AdaCache`.
+- Read `README.md`, `configs/sample_adacache.py`, `configs/sample_adacache_moreg.py`, `inference.py`, and the core implementation in `opensora_base/opensora/models/stdit/stdit3.py`.
+- No Wan2.2 implementation changes were made in this pass.
+- Key findings:
+  - AdaCache is a training-free adaptive residual cache for video DiTs.
+  - The released Open-Sora implementation caches selected block residual components (`t-attn`, `s-attn`, or `ca-mlp`) rather than whole denoiser output.
+  - It uses a per-sample/per-run codebook mapping residual-change magnitude to the next cache interval, so the recompute cadence adapts during sampling.
+  - The default released config uses temporal-attention residual caching at block `13` with a 100-step codebook `{0.03: 12, 0.05: 10, 0.07: 8, 0.09: 6, 0.11: 4, 1.00: 3}`.
+  - MoReg multiplies the residual-change metric by a motion regularizer derived from temporal residual differences, allocating more compute to high-motion or rapidly changing motion regions/steps.
+
+## 2026-06-16 AdaCache Wan2.2 Isolated Adapter
+
+- Copied the official AdaCache repository into the Wan2.2 worktree at `third_party/AdaCache` and removed nested `.git` metadata so it can be versioned by this repository.
+- Per user instruction, did not modify Wan2.2 main source files (`generate.py`, `wan/`, etc.).
+- Added an isolated Wan2.2 runtime adapter under `third_party/AdaCache/wan22_adacache/`:
+  - `adapter.py`: monkey-patches `WanModel.forward` and `WanAttentionBlock.forward` at runtime only.
+  - `README.md`: documents usage and method mapping.
+  - `run_wan22_adacache.py`: wrapper launcher that consumes `--block_cache adacache` and AdaCache-specific arguments, enables the runtime patch, and delegates to Wan2.2 `generate.py`.
+- Adapter behavior:
+  - caches residuals for every Wan2.2 transformer block, matching the official AdaCache style;
+  - uses `cache_loc` only for computing the shared adaptive cadence metric;
+  - defaults to the official codebook `0.03:12,0.05:10,0.07:8,0.09:6,0.11:4,1.0:3`;
+  - maps `t-attn`/`s-attn`/`self-attn` to Wan2.2 self-attention residuals and `ca-mlp` to cross-attention plus FFN residuals;
+  - keys state by explicit `(model_stage, branch)`;
+  - clears the completed high/low stage so the next model stage cold-starts.
+- Validation run:
+  - `py_compile` passed for the new adapter and wrapper using `/hy-tmp/miniconda3/envs/Wan2.2/bin/python`.
+  - Wrapper `--help` successfully delegated to Wan2.2 `generate.py`.
+- No GPU inference smoke test has been run yet.
+
+## 2026-06-16 AdaCache VBench Batch Runner
+
+- Added `experiments/adacache_vbench_50step_45f_480p/`.
+- New files:
+  - `run_batch.py`
+  - `run_tmux.sh`
+  - `README.md`
+- Runner design:
+  - single-process batch runner;
+  - loads WanT2V once;
+  - runs selected VBench prompts from `test_sets/vbench_every20/prompts.jsonl`;
+  - runs no-cache baseline and AdaCache candidate for each selected prompt;
+  - uses project defaults: `t2v-A14B`, `/hy-tmp/models/Wan2.2-T2V-A14B`, seed `42`, `832*480`, `45` frames, `50` steps, `dpm++`, `--offload_model`, dtype conversion enabled;
+  - archives videos, ffprobe JSON, PSNR JSON/logs, command records, raw logs, manifests, failed records, `experiment_config.json`, `launch.env`, and summary CSV/JSON under `/hy-tmp`.
+- Important adapter fix:
+  - added an `enabled` switch to the AdaCache runtime so the runner can keep the monkey patch installed but disabled during baseline runs;
+  - candidate runs enable AdaCache only for the candidate generation and clear state afterward.
+- Validation:
+  - `py_compile` passed for `third_party/AdaCache/wan22_adacache/adapter.py` and the new runner.
+  - CPU validate passed for both full VBench prompt set (`51` prompts) and a two-prompt subset.
+- GPU smoke test launched afterward; see next entry.
+
+## 2026-06-16 AdaCache VBench Smoke OOM
+
+- Ran one-prompt VBench smoke test:
+  - command: `experiments/adacache_vbench_50step_45f_480p/run_batch.py --prompt_limit 1 --exp_root /hy-tmp/wan22_adacache_vbench_smoke_20260616_1908 --convert_model_dtype`
+  - prompt: `vbench_every20_001`
+  - baseline + AdaCache candidate, default AdaCache config (`t-attn`, `cache_loc=13`, official codebook, no MoReg).
+- GPU mode was confirmed before launch:
+  - `NVIDIA A100 80GB PCIe`
+  - initially `0 MiB / 81920 MiB` used.
+- Baseline completed successfully:
+  - video: `/hy-tmp/wan22_adacache_vbench_smoke_20260616_1908/baseline/vbench_every20_001.mp4`
+  - ffprobe JSON exists.
+  - compute elapsed: `533.455s`.
+  - observed baseline sampling memory was about `44.0GB`.
+- AdaCache candidate OOMed at step `0`, during the `uncond` branch self-attention call:
+  - log: `/hy-tmp/wan22_adacache_vbench_smoke_20260616_1908/logs/adacache_vbench_every20_001.log`
+  - failed record: `/hy-tmp/wan22_adacache_vbench_smoke_20260616_1908/failed/adacache_vbench_every20_001.txt`
+  - error: tried to allocate `732 MiB`; only `716.94 MiB` free.
+  - process had `78.54 GiB` in use; PyTorch allocated `73.15 GiB` and reserved `4.90 GiB`.
+  - observed `nvidia-smi` just before failure showed about `81001 MiB / 81920 MiB`.
+- Takeaway:
+  - The fully official-style AdaCache implementation that caches residuals for all Wan2.2 blocks and keeps explicit `cond`/`uncond` branch state does not fit this single A100 80GB setup at the default `832*480`, `45f`, `50-step` configuration.
+  - A reduced-memory variant is needed for practical comparison, e.g. selected-block-only caching, CPU/offloaded cache tensors, or avoiding simultaneous cond/uncond full-block residual caches.
+
+## 2026-06-17 Multi-session Commit Checkpoint
+
+- User requested committing accumulated progress from multiple sessions.
+- Reviewed working tree before staging:
+  - `PROGRESS.md` contains accumulated entries for TaylorSeer third-party move, VBench runners, adaptive predictor training comparisons, adaptive SeaCache prototype/run, AdaCache method review/adapter/runner/smoke OOM.
+  - top-level `taylorseer_wan22/` was deleted after moving the standalone integration to `third_party/taylorseer_wan22/`.
+  - new code/directories include `adaptive_seacache_wan22/`, `experiments/adacache_vbench_50step_45f_480p/`, `experiments/adaptive_seacache_ali_prompt12_50step_45f_480p/`, `experiments/taylorseer_vbench_50step_45f_480p/`, and `third_party/`.
+  - new logs under `logs/2026-06-16_*` document implementation notes, training logs, launches, and OOM diagnosis.
+- Size check:
+  - `third_party/` is about `301M`, mainly the copied AdaCache/Open-Sora source tree and included demo assets; no file larger than `20M` was found in the new code/directories checked.
+  - ignored `__pycache__/` files were not staged.
+- No new validation was run during this commit-only session; validation status is the one recorded in the individual 2026-06-16 progress entries.

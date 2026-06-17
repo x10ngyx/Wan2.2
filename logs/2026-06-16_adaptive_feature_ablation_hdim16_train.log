@@ -1,0 +1,77 @@
+running: /hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.train_gate --dataset_mode candidate_inverse --feature_set temporal_mean --epochs 30 --batch_size 256 --hidden_dim 16 --psnr_min 10.0 --psnr_max 50.0 --out_dir /hy-tmp/wan22_adaptive_threshold_feature_ablation_hdim16_20260616/temporal_mean --num_workers 0 --cache_dir /hy-tmp/wan22_adaptive_threshold_feature_cache_candidate_inverse_20260616_012409 --device cuda --save_val_predictions
+/hy-tmp/work/Wan2.2/adaptive_threshold_predictor/data.py:251: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  self.features = torch.load(feature_path, map_location="cpu").float()
+/hy-tmp/work/Wan2.2/adaptive_threshold_predictor/data.py:252: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  metadata = torch.load(metadata_path, map_location="cpu")
+{"epoch": 1, "train_loss": 0.02003295332789421, "val_loss": 0.01311041529327631, "val_mae": 0.12417946257591247}
+{"epoch": 2, "train_loss": 0.009082455837726593, "val_loss": 0.012569492767751217, "val_mae": 0.11917579107284546}
+{"epoch": 3, "train_loss": 0.008458944296836853, "val_loss": 0.012530793523788452, "val_mae": 0.11910386276245118}
+{"epoch": 4, "train_loss": 0.00796293956041336, "val_loss": 0.01225368892773986, "val_mae": 0.11938833252191544}
+{"epoch": 5, "train_loss": 0.00746463248282671, "val_loss": 0.013567149699479341, "val_mae": 0.12417334287166595}
+{"epoch": 6, "train_loss": 0.007000731662660837, "val_loss": 0.014494346109777689, "val_mae": 0.12630768921375274}
+{"epoch": 7, "train_loss": 0.006639494815468788, "val_loss": 0.015137680213246494, "val_mae": 0.12794762033820153}
+{"epoch": 8, "train_loss": 0.006471686185896396, "val_loss": 0.015494084790349007, "val_mae": 0.12907186742424964}
+{"epoch": 9, "train_loss": 0.006233300240337848, "val_loss": 0.016293423921428622, "val_mae": 0.1335247034549713}
+{"epoch": 10, "train_loss": 0.006148171871900559, "val_loss": 0.016688595277071, "val_mae": 0.13475576967597008}
+{"epoch": 11, "train_loss": 0.005970276079326868, "val_loss": 0.01692602815423161, "val_mae": 0.13533621750473976}
+{"epoch": 12, "train_loss": 0.005926709485799074, "val_loss": 0.017503620431385935, "val_mae": 0.1369185263335705}
+{"epoch": 13, "train_loss": 0.005760775492340327, "val_loss": 0.01781902280356735, "val_mae": 0.13738425602912901}
+{"epoch": 14, "train_loss": 0.0056861277267336845, "val_loss": 0.018035039847716688, "val_mae": 0.1391993682563305}
+{"epoch": 15, "train_loss": 0.005497445394843817, "val_loss": 0.019332976390048863, "val_mae": 0.14349731944799424}
+{"epoch": 16, "train_loss": 0.005363813101500273, "val_loss": 0.019173444670438765, "val_mae": 0.14380751410722734}
+{"epoch": 17, "train_loss": 0.005312479823827743, "val_loss": 0.01916115558668971, "val_mae": 0.14358809161782266}
+{"epoch": 18, "train_loss": 0.005269018290191889, "val_loss": 0.02018682331740856, "val_mae": 0.1486386933863163}
+{"epoch": 19, "train_loss": 0.005141886040568352, "val_loss": 0.020095661263540388, "val_mae": 0.14706992926597595}
+{"epoch": 20, "train_loss": 0.00507676839530468, "val_loss": 0.020737492843717335, "val_mae": 0.14844708244204521}
+{"epoch": 21, "train_loss": 0.0050417745187878605, "val_loss": 0.020372941206023096, "val_mae": 0.14857935391068458}
+{"epoch": 22, "train_loss": 0.004952003811299801, "val_loss": 0.020510650263726712, "val_mae": 0.14809214953184127}
+{"epoch": 23, "train_loss": 0.004993140077590942, "val_loss": 0.020433380422741176, "val_mae": 0.1488317856311798}
+{"epoch": 24, "train_loss": 0.004824681111425162, "val_loss": 0.020868849521130325, "val_mae": 0.14963122676610946}
+{"epoch": 25, "train_loss": 0.004778124898672104, "val_loss": 0.0209038918312639, "val_mae": 0.15096965782642366}
+{"epoch": 26, "train_loss": 0.004845004463195801, "val_loss": 0.021070711601525544, "val_mae": 0.15081171771287918}
+{"epoch": 27, "train_loss": 0.004692425002902746, "val_loss": 0.020435264245048164, "val_mae": 0.14724619467258454}
+{"epoch": 28, "train_loss": 0.004726016511023045, "val_loss": 0.02109948206394911, "val_mae": 0.14981355776786803}
+{"epoch": 29, "train_loss": 0.004619115760922432, "val_loss": 0.020804062655568122, "val_mae": 0.15057522159814835}
+{"epoch": 30, "train_loss": 0.0046074934355914594, "val_loss": 0.02112002157047391, "val_mae": 0.15169802408218383}
+saved: /hy-tmp/wan22_adaptive_threshold_feature_ablation_hdim16_20260616/temporal_mean
+running: /hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.train_gate --dataset_mode candidate_inverse --feature_set latent_pool --epochs 30 --batch_size 256 --hidden_dim 16 --psnr_min 10.0 --psnr_max 50.0 --out_dir /hy-tmp/wan22_adaptive_threshold_feature_ablation_hdim16_20260616/latent_pool --num_workers 0 --cache_dir /hy-tmp/wan22_adaptive_threshold_feature_cache_candidate_inverse_20260616_012409 --device cuda --save_val_predictions
+/hy-tmp/work/Wan2.2/adaptive_threshold_predictor/data.py:251: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  self.features = torch.load(feature_path, map_location="cpu").float()
+/hy-tmp/work/Wan2.2/adaptive_threshold_predictor/data.py:252: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  metadata = torch.load(metadata_path, map_location="cpu")
+{"epoch": 1, "train_loss": 0.013938848227262497, "val_loss": 0.01322403714954853, "val_mae": 0.12472876327037812}
+{"epoch": 2, "train_loss": 0.008954468873143197, "val_loss": 0.013288436284661293, "val_mae": 0.12074684655666351}
+{"epoch": 3, "train_loss": 0.008332902249693871, "val_loss": 0.012830550417304038, "val_mae": 0.11875764153003693}
+{"epoch": 4, "train_loss": 0.007724732387065888, "val_loss": 0.012472539402171969, "val_mae": 0.12157104845046997}
+{"epoch": 5, "train_loss": 0.0072647674292325975, "val_loss": 0.012725071872584521, "val_mae": 0.11948844850659371}
+{"epoch": 6, "train_loss": 0.006890465752780437, "val_loss": 0.013323373187705875, "val_mae": 0.11942449346780777}
+{"epoch": 7, "train_loss": 0.006567709174752236, "val_loss": 0.013565918469242752, "val_mae": 0.11947847559452057}
+{"epoch": 8, "train_loss": 0.006437749211490154, "val_loss": 0.01347769392831251, "val_mae": 0.12187139340043068}
+{"epoch": 9, "train_loss": 0.006233017945289612, "val_loss": 0.013894734183466062, "val_mae": 0.1274434835910797}
+{"epoch": 10, "train_loss": 0.005974385835975408, "val_loss": 0.014475916895084083, "val_mae": 0.12315985390543938}
+{"epoch": 11, "train_loss": 0.005863498003035783, "val_loss": 0.014914142639935016, "val_mae": 0.12539599474668503}
+{"epoch": 12, "train_loss": 0.005765114247798919, "val_loss": 0.014064909938722848, "val_mae": 0.12605041709542275}
+{"epoch": 13, "train_loss": 0.0055243659071624275, "val_loss": 0.015157135893404484, "val_mae": 0.12863670736551286}
+{"epoch": 14, "train_loss": 0.0054779738985002045, "val_loss": 0.015151889954134821, "val_mae": 0.12901220396757127}
+{"epoch": 15, "train_loss": 0.005344148722290993, "val_loss": 0.015463745726272463, "val_mae": 0.13120439829826355}
+{"epoch": 16, "train_loss": 0.005299347995966673, "val_loss": 0.015447026889026164, "val_mae": 0.1311091593027115}
+{"epoch": 17, "train_loss": 0.005139422556757927, "val_loss": 0.01641892528012395, "val_mae": 0.13542438234090806}
+{"epoch": 18, "train_loss": 0.0051141893412917855, "val_loss": 0.015919675957411526, "val_mae": 0.13326745047569274}
+{"epoch": 19, "train_loss": 0.005087941051274538, "val_loss": 0.016634305922687054, "val_mae": 0.135720270216465}
+{"epoch": 20, "train_loss": 0.005043598138540983, "val_loss": 0.017044890064746143, "val_mae": 0.14081747992038726}
+{"epoch": 21, "train_loss": 0.004909640440344811, "val_loss": 0.016741983883827926, "val_mae": 0.13650076410770418}
+{"epoch": 22, "train_loss": 0.004943022678792476, "val_loss": 0.017262679992616176, "val_mae": 0.13742237690687178}
+{"epoch": 23, "train_loss": 0.004904322710633278, "val_loss": 0.017134523938596248, "val_mae": 0.13806911368370056}
+{"epoch": 24, "train_loss": 0.004886322852224112, "val_loss": 0.017021054984629153, "val_mae": 0.13770614972114564}
+{"epoch": 25, "train_loss": 0.004838303410634398, "val_loss": 0.01685041958838701, "val_mae": 0.14072333188056946}
+{"epoch": 26, "train_loss": 0.0046972353458404545, "val_loss": 0.017831011017411948, "val_mae": 0.14094328610897064}
+{"epoch": 27, "train_loss": 0.004683390495926142, "val_loss": 0.01730946947187185, "val_mae": 0.13794921135902405}
+{"epoch": 28, "train_loss": 0.004642277521640062, "val_loss": 0.018056568256765604, "val_mae": 0.14263906922340394}
+{"epoch": 29, "train_loss": 0.004643083193153143, "val_loss": 0.01882654962018132, "val_mae": 0.14712696704864503}
+{"epoch": 30, "train_loss": 0.004652830527722835, "val_loss": 0.018201250572502613, "val_mae": 0.1447310374379158}
+saved: /hy-tmp/wan22_adaptive_threshold_feature_ablation_hdim16_20260616/latent_pool
+feature_set,parameters,train_loss,val_loss,val_mae,metrics_path
+latent_pool,3505,0.00465283,0.01820125,0.14473104,/hy-tmp/wan22_adaptive_threshold_feature_ablation_hdim16_20260616/latent_pool/metrics.json
+temporal_mean,3505,0.00460749,0.02112002,0.15169802,/hy-tmp/wan22_adaptive_threshold_feature_ablation_hdim16_20260616/temporal_mean/metrics.json
+saved summary: /hy-tmp/wan22_adaptive_threshold_feature_ablation_hdim16_20260616/feature_ablation_summary.json
+saved summary csv: /hy-tmp/wan22_adaptive_threshold_feature_ablation_hdim16_20260616/feature_ablation_summary.csv
