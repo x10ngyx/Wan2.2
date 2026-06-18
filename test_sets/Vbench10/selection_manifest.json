@@ -1,0 +1,63 @@
+{
+  "name": "Vbench10",
+  "created_at": "2026-06-17",
+  "source_set": "vbench_every20",
+  "source_file": "test_sets/vbench_every20/prompts.jsonl",
+  "source_count": 51,
+  "count": 10,
+  "random_seed": 42,
+  "selected_source_set_indices_0based": [
+    1,
+    6,
+    7,
+    8,
+    14,
+    15,
+    17,
+    34,
+    40,
+    47
+  ],
+  "selected_source_set_indices_1based": [
+    2,
+    7,
+    8,
+    9,
+    15,
+    16,
+    18,
+    35,
+    41,
+    48
+  ],
+  "selected_source_sample_ids": [
+    "vbench_every20_002",
+    "vbench_every20_007",
+    "vbench_every20_008",
+    "vbench_every20_009",
+    "vbench_every20_015",
+    "vbench_every20_016",
+    "vbench_every20_018",
+    "vbench_every20_035",
+    "vbench_every20_041",
+    "vbench_every20_048"
+  ],
+  "selected_source_indices_1based": [
+    21,
+    121,
+    141,
+    161,
+    281,
+    301,
+    341,
+    681,
+    801,
+    941
+  ],
+  "sampling_rule": "random.sample(range(51), 10) using Python random.Random(42), sorted ascending before writing",
+  "files": [
+    "Vbench10/prompts.txt",
+    "Vbench10/prompts.jsonl",
+    "Vbench10/selection_manifest.json"
+  ]
+}

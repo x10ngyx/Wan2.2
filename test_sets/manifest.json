@@ -38,13 +38,28 @@
         "vbench_every20/prompts.txt",
         "vbench_every20/prompts.jsonl"
       ]
+    },
+    {
+      "name": "Vbench10",
+      "count": 10,
+      "source": "test_sets/vbench_every20/prompts.jsonl",
+      "parent_set": "vbench_every20",
+      "parent_count": 51,
+      "random_seed": 42,
+      "sampling_rule": "random.sample(range(51), 10) using Python random.Random(42), sorted ascending before writing",
+      "files": [
+        "Vbench10/prompts.txt",
+        "Vbench10/prompts.jsonl",
+        "Vbench10/selection_manifest.json"
+      ]
     }
   ],
   "combined": {
-    "count": 161,
+    "count": 171,
     "files": [
       "all_prompts.jsonl",
       "all_prompts.csv"
     ]
-  }
+  },
+  "updated_at": "2026-06-17"
 }

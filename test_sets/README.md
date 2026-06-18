@@ -7,6 +7,7 @@ This directory keeps the prompt resources used for Wan2.2 T2V cache experiments.
 - `ali_10/`: 10 Ali prompts copied from repository `prompt.txt`.
 - `openvid_100/`: 100 OpenVid prompts extracted from `/hy-tmp/openvid_100_wan22_prompts.zip`.
 - `vbench_every20/`: VBench-2.0 prompts sampled from `VBench2_full_text.txt` by taking source lines `1, 21, 41, ...`.
+- `Vbench10/`: unified 10-prompt subset randomly sampled from `vbench_every20/` with `random_seed=42`; use this set for subsequent comparison experiments unless a task says otherwise.
 - `all_prompts.jsonl` and `all_prompts.csv`: combined lightweight indexes across all three sets.
 - `manifest.json`: source paths, counts, and sampling rule.
 

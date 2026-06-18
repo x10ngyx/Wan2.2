@@ -211,6 +211,16 @@ The main report covers fixed ZEUS, ZEUS-threshold reuse_interp, and the three-ca
 2. Use the consolidated table to define the first adaptive-threshold predictor baseline.
 3. Keep future progress entries concise and append-only from this reset point.
 
+## 2026-06-18 Current Repo Remote Handoff
+
+- Handoff workflow clarified: do not package the current repository into OSS. Keep code in GitHub; put only reusable runtime artifacts such as the packed conda environment in OSS.
+- Reused existing packed environment from the earlier handoff:
+  - Local source: `/hy-tmp/wan22_openvid_first50_handoff_build/Wan2.2/env/Wan2.2-conda-env.tar.gz`
+  - SHA256: `348f63583d2a3ea742b80341dbb97043c6a497065e593a1329b1aad1a0551f03`
+  - Intended OSS target: `oss://datasets/Wan2.2-conda-env.tar.gz`
+- Model weights are not included in this environment artifact; remote machines should fetch or mount Wan2.2 T2V-A14B weights separately at `/hy-tmp/models/Wan2.2-T2V-A14B` or pass the checkpoint path explicitly.
+- Current code should be committed and pushed to the GitHub fork remote `x10ngyx` unless the user specifies a different writable remote.
+
 ## 2026-06-15 TaylorSeer Timestep-Only Prototype
 
 - Added a lightweight timestep-output TaylorSeer prototype for WanT2V experiments.
