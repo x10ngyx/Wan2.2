@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Hashable, Optional
@@ -25,6 +26,7 @@ class AdaptiveSeaCacheGateConfig:
     min_threshold: float = 0.0
     max_threshold: float = 1.0
     device: str = "cuda"
+    measure_predictor_timing: bool = False
 
 
 class OnlineCachedFeatureGate(nn.Module):
@@ -117,6 +119,7 @@ class AdaptiveSeaCachePrediction:
 class AdaptiveSeaCacheKeyState:
     threshold_path: list[tuple[int, float]] = field(default_factory=list)
     decision_trace: list[dict[str, object]] = field(default_factory=list)
+    predictor_elapsed_path: list[tuple[int, float]] = field(default_factory=list)
 
 
 class AdaptiveSeaCacheTimestepCache(SeaCacheTimestepCache):
@@ -155,11 +158,23 @@ class AdaptiveSeaCacheTimestepCache(SeaCacheTimestepCache):
                 "Call patch_wan_model_forward_for_adaptive_seacache() before inference."
             )
         latent = self._current_latents[key]
-        threshold = self.gate.predict(latent, step_index, num_steps)
+        predictor_elapsed = None
+        if self.gate.config.measure_predictor_timing:
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            predictor_start = time.perf_counter()
+            threshold = self.gate.predict(latent, step_index, num_steps)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            predictor_elapsed = time.perf_counter() - predictor_start
+        else:
+            threshold = self.gate.predict(latent, step_index, num_steps)
         previous_threshold = self.config.threshold
         self.config.threshold = threshold
         key_state = self._key_states.setdefault(key, AdaptiveSeaCacheKeyState())
         key_state.threshold_path.append((step_index, threshold))
+        if predictor_elapsed is not None:
+            key_state.predictor_elapsed_path.append((step_index, predictor_elapsed))
         try:
             should_reuse, cached_residual = super().should_reuse_blocks(
                 key,
@@ -183,6 +198,7 @@ class AdaptiveSeaCacheTimestepCache(SeaCacheTimestepCache):
                     "accumulated_rel_l1": accumulated_rel_l1,
                     "decision": "reuse" if should_reuse else "recompute",
                     "force_recompute": bool(force_recompute),
+                    "predictor_elapsed_seconds": predictor_elapsed,
                 }
             )
             return should_reuse, cached_residual
@@ -199,7 +215,98 @@ class AdaptiveSeaCacheTimestepCache(SeaCacheTimestepCache):
                 result[str(key)]["adaptive_threshold_min"] = min(values)
                 result[str(key)]["adaptive_threshold_max"] = max(values)
                 result[str(key)]["adaptive_threshold_mean"] = sum(values) / len(values)
+            if state.predictor_elapsed_path:
+                elapsed_values = [value for _, value in state.predictor_elapsed_path]
+                result[str(key)]["adaptive_predictor_elapsed_path"] = list(
+                    state.predictor_elapsed_path)
+                result[str(key)]["adaptive_predictor_elapsed_total_seconds"] = sum(
+                    elapsed_values)
+                result[str(key)]["adaptive_predictor_elapsed_mean_seconds"] = (
+                    sum(elapsed_values) / len(elapsed_values))
+                result[str(key)]["adaptive_predictor_elapsed_max_seconds"] = max(
+                    elapsed_values)
+                result[str(key)]["adaptive_predictor_call_count"] = len(elapsed_values)
             result[str(key)]["adaptive_decision_trace"] = list(state.decision_trace)
+        return result
+
+
+class ReplaySeaCacheTimestepCache(SeaCacheTimestepCache):
+    """SeaCache timestep cache that replays a saved adaptive threshold trace."""
+
+    def __init__(
+        self,
+        config: SeaCacheTimestepCacheConfig,
+        threshold_trace: dict[tuple[str, str, int], float],
+    ) -> None:
+        super().__init__(config)
+        self.threshold_trace = threshold_trace
+        self.decision_trace: dict[Hashable, list[dict[str, object]]] = {}
+        self.threshold_path: dict[Hashable, list[tuple[int, float]]] = {}
+
+    def should_reuse_blocks(
+        self,
+        key: Hashable,
+        step_index: int,
+        num_steps: int,
+        feature: torch.Tensor,
+        grid_size: torch.Tensor,
+        scheduler_sigmas: Optional[torch.Tensor] = None,
+        force_recompute: bool = False,
+    ):
+        try:
+            model_stage, branch = key
+        except Exception as exc:
+            raise ValueError(f"Replay SeaCache expected key=(stage, branch), got {key!r}") from exc
+        lookup_key = (str(model_stage), str(branch), int(step_index))
+        if lookup_key not in self.threshold_trace:
+            raise KeyError(f"Missing replay threshold for {lookup_key}")
+        threshold = self.threshold_trace[lookup_key]
+        previous_threshold = self.config.threshold
+        self.config.threshold = threshold
+        self.threshold_path.setdefault(key, []).append((step_index, threshold))
+        try:
+            should_reuse, cached_residual = super().should_reuse_blocks(
+                key,
+                step_index,
+                num_steps,
+                feature,
+                grid_size,
+                scheduler_sigmas=scheduler_sigmas,
+                force_recompute=force_recompute,
+            )
+            sea_state = self.states[key]
+            accumulated_rel_l1 = sea_state.accumulated_rel_l1_distance
+            rel_l1 = None
+            if sea_state.rel_l1_path and sea_state.rel_l1_path[-1][0] == step_index:
+                rel_l1 = sea_state.rel_l1_path[-1][1]
+            self.decision_trace.setdefault(key, []).append(
+                {
+                    "step_index": step_index,
+                    "predicted_threshold": threshold,
+                    "rel_l1": rel_l1,
+                    "accumulated_rel_l1": accumulated_rel_l1,
+                    "decision": "reuse" if should_reuse else "recompute",
+                    "force_recompute": bool(force_recompute),
+                    "predictor_elapsed_seconds": None,
+                    "replay_threshold": True,
+                }
+            )
+            return should_reuse, cached_residual
+        finally:
+            self.config.threshold = previous_threshold
+
+    def summary(self):
+        result = super().summary()
+        for key, rows in self.decision_trace.items():
+            result.setdefault(str(key), {})
+            result[str(key)]["adaptive_decision_trace"] = list(rows)
+            result[str(key)]["adaptive_threshold_path"] = list(
+                self.threshold_path.get(key, []))
+            if self.threshold_path.get(key):
+                values = [value for _, value in self.threshold_path[key]]
+                result[str(key)]["adaptive_threshold_min"] = min(values)
+                result[str(key)]["adaptive_threshold_max"] = max(values)
+                result[str(key)]["adaptive_threshold_mean"] = sum(values) / len(values)
         return result
 
 def build_adaptive_seacache_factory(
@@ -230,3 +337,23 @@ def build_adaptive_seacache_factory(
             return cache
 
     return AdaptiveSeaCacheFactory()
+
+
+def build_replay_seacache_factory(
+    threshold_trace: dict[tuple[str, str, int], float],
+):
+    class ReplaySeaCacheFactory:
+        def __init__(self) -> None:
+            self.instances: list[ReplaySeaCacheTimestepCache] = []
+            self.last_instance: ReplaySeaCacheTimestepCache | None = None
+
+        def __call__(
+            self,
+            config: SeaCacheTimestepCacheConfig,
+        ) -> ReplaySeaCacheTimestepCache:
+            cache = ReplaySeaCacheTimestepCache(config, threshold_trace)
+            self.instances.append(cache)
+            self.last_instance = cache
+            return cache
+
+    return ReplaySeaCacheFactory()

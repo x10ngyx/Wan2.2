@@ -218,6 +218,100 @@ The main report covers fixed ZEUS, ZEUS-threshold reuse_interp, and the three-ca
   - Local source: `/hy-tmp/wan22_openvid_first50_handoff_build/Wan2.2/env/Wan2.2-conda-env.tar.gz`
   - SHA256: `348f63583d2a3ea742b80341dbb97043c6a497065e593a1329b1aad1a0551f03`
   - Uploaded OSS target: `oss://datasets/Wan2.2-conda-env.tar.gz`
+
+## 2026-06-19 Adaptive SeaCache Train-Split OpenVid-10 Launch
+
+- Added a dedicated runner under `experiments/adaptive_seacache_train10_50step_45f_480p/`.
+- Purpose: run the same timestep-only adaptive SeaCache inference setting on 10 prompts randomly sampled from the adaptive predictor train split.
+- Sampling:
+  - Predictor split: `/hy-tmp/wan22_adaptive_threshold_feature_ablation_hdim16_20260616/temporal_mean/split.json`
+  - Prompt source: `test_sets/openvid_100/prompts.jsonl`
+  - Random seed: `20260619`
+  - Selected source IDs: `openvidhd_part1_085`, `openvidhd_part1_086`, `openvidhd_part1_059`, `openvidhd_part1_057`, `openvidhd_part1_016`, `openvidhd_part1_036`, `openvidhd_part1_093`, `openvidhd_part1_063`, `openvidhd_part1_095`, `openvidhd_part1_058`
+- Baselines are reused from `/hy-tmp/work/Wan2.2/experiment_results/openvid_100_seacache_trace_data`; this runner does not regenerate no-cache baselines.
+- Candidate settings:
+  - target PSNRs: `20 25 30`
+  - seed: `42`
+  - size: `832*480`
+  - frames: `45`
+  - steps: `50`
+  - solver: `dpm++`
+  - `--offload_model true`
+  - `--convert_model_dtype`
+  - predictor checkpoint: `/hy-tmp/wan22_adaptive_threshold_feature_ablation_hdim16_20260616/temporal_mean/best_model.pt`
+- CPU validation passed: 10 selected train prompts and all reusable baseline videos/logs/time/ffprobe artifacts were found.
+- Launched tmux session `adaptive_seacache_train10` at 2026-06-19 13:45 CST.
+- Experiment root: `/hy-tmp/wan22_adaptive_seacache_train10_50step_45f_480p_20260619_134522`
+- Initial log check showed the adaptive gate checkpoint loaded successfully and no immediate error.
+- Superseded shortly after launch by the larger train15/test5 request. The tmux session `adaptive_seacache_train10` was stopped after only one candidate had completed. Treat this root as an interrupted pilot, not as the formal result set.
+
+## 2026-06-19 Adaptive SeaCache Train15/Test5 Launch
+
+- Added a dedicated runner under `experiments/adaptive_seacache_train15_test5_50step_45f_480p/`.
+- Purpose: run the same timestep-only adaptive SeaCache inference setting on 20 prompts from the predictor split: 15 train prompts and 5 held-out validation/test prompts.
+- Sampling:
+  - Predictor split: `/hy-tmp/wan22_adaptive_threshold_feature_ablation_hdim16_20260616/temporal_mean/split.json`
+  - Prompt source: `test_sets/openvid_100/prompts.jsonl`
+  - Random seed: `20260619`
+  - Train source IDs: `openvidhd_part1_085`, `openvidhd_part1_086`, `openvidhd_part1_059`, `openvidhd_part1_057`, `openvidhd_part1_016`, `openvidhd_part1_036`, `openvidhd_part1_093`, `openvidhd_part1_063`, `openvidhd_part1_095`, `openvidhd_part1_058`, `openvidhd_part1_027`, `openvidhd_part1_012`, `openvidhd_part1_020`, `openvidhd_part1_031`, `openvidhd_part1_037`
+  - Test/val source IDs: `openvidhd_part1_028`, `openvidhd_part1_030`, `openvidhd_part1_026`, `openvidhd_part1_092`, `openvidhd_part1_055`
+- Baselines are reused from `/hy-tmp/work/Wan2.2/experiment_results/openvid_100_seacache_trace_data`; this runner does not regenerate no-cache baselines.
+- Candidate settings:
+  - target PSNRs: `20 25 30`
+  - total candidates: `60`
+  - seed: `42`
+  - size: `832*480`
+  - frames: `45`
+  - steps: `50`
+  - solver: `dpm++`
+  - `--offload_model true`
+  - `--convert_model_dtype`
+  - predictor checkpoint: `/hy-tmp/wan22_adaptive_threshold_feature_ablation_hdim16_20260616/temporal_mean/best_model.pt`
+- CPU validation passed: 20 selected prompts and all reusable baseline videos/logs/time/ffprobe artifacts were found.
+- Launched tmux session `adaptive_seacache_train15_test5` at 2026-06-19 13:55 CST.
+- Experiment root: `/hy-tmp/wan22_adaptive_seacache_train15_test5_50step_45f_480p_20260619_135521`
+- Initial log check showed the adaptive gate checkpoint loaded successfully and no immediate error.
+
+## 2026-06-19 Adaptive SeaCache Predictor Overhead Setup
+
+- Added predictor overhead instrumentation to `adaptive_seacache_wan22/cache.py`:
+  - `AdaptiveSeaCacheGateConfig.measure_predictor_timing`
+  - per-call `predictor_elapsed_seconds` in adaptive decision trace
+  - summary fields for predictor total/mean/max/call count
+  - `ReplaySeaCacheTimestepCache` and `build_replay_seacache_factory()` for threshold-trace replay without predictor calls
+- Added overhead runner under `experiments/adaptive_seacache_overhead_train5_50step_45f_480p/`.
+- Overhead experiment design:
+  - 5 train prompts: `openvidhd_part1_085`, `openvidhd_part1_086`, `openvidhd_part1_059`, `openvidhd_part1_057`, `openvidhd_part1_016`
+  - target PSNRs: `20 25 30`
+  - online adaptive run records predictor timing
+  - replay run uses the online trace's `(model_stage, branch, step_index) -> threshold` sequence without invoking predictor
+  - summary records predictor total elapsed, online/replay compute elapsed, replay-overhead delta, and decision mismatch count
+- CPU validation passed for the 5 selected prompts and reusable baselines.
+- Launched tmux session `adaptive_seacache_overhead_train5` at 2026-06-19 14:36 CST.
+- Overhead session is intentionally waiting for `adaptive_seacache_train15_test5` to finish before loading WanT2V and running.
+- Overhead experiment root: `/hy-tmp/wan22_adaptive_seacache_overhead_train5_50step_45f_480p_20260619_143632`
+
+## 2026-06-22 Adaptive SeaCache Result Check
+
+- Added workspace symlinks:
+  - `experiment_results/wan22_adaptive_seacache_train10_50step_45f_480p_20260619_134522`
+  - `experiment_results/wan22_adaptive_seacache_train15_test5_50step_45f_480p_20260619_135521`
+  - `experiment_results/wan22_adaptive_seacache_overhead_train5_50step_45f_480p_20260619_143632`
+- No tmux sessions were running at check time.
+- All three experiment roots lack final `results/summary.csv` because the runs did not reach normal completion:
+  - `train10`: interrupted pilot, 1/30 candidate completed.
+  - `train15_test5`: stopped by OOM at `openvidhd_part1_016 target=20`; 12/60 candidates completed.
+  - `overhead_train5`: stopped by OOM at `openvidhd_part1_057 target=30`; 22 rows completed, representing 11/15 online/replay pairs.
+- Generated partial summaries from existing artifacts:
+  - `/hy-tmp/wan22_adaptive_seacache_train10_50step_45f_480p_20260619_134522/results/partial_summary.csv`
+  - `/hy-tmp/wan22_adaptive_seacache_train15_test5_50step_45f_480p_20260619_135521/results/partial_summary.csv`
+  - `/hy-tmp/wan22_adaptive_seacache_overhead_train5_50step_45f_480p_20260619_143632/results/partial_summary.csv`
+- Completed video ffprobe checks all passed for existing outputs: `832x480`, `45` frames.
+- Key partial results:
+  - `train15_test5` over 4 completed train prompts: target 20 mean PSNR `23.544`, speedup `3.226x`; target 25 mean PSNR `24.928`, speedup `2.575x`; target 30 mean PSNR `29.740`, speedup `2.066x`.
+  - overhead online/replay completed pairs had zero decision mismatches.
+  - predictor timing overhead mean total per candidate: about `0.195s`, about `0.096%` of online compute elapsed.
+  - replay-based overhead mean: about `0.218s`, about `0.12%` of online compute elapsed.
 - Model weights are not included in this environment artifact; remote machines should fetch or mount Wan2.2 T2V-A14B weights separately at `/hy-tmp/models/Wan2.2-T2V-A14B` or pass the checkpoint path explicitly.
 - Current code was pushed to GitHub fork remote `x10ngyx`, branch `main`, at commit `6f68c87`.
 
