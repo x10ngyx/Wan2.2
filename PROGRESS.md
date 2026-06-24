@@ -218,10 +218,31 @@ The main report covers fixed ZEUS, ZEUS-threshold reuse_interp, and the three-ca
 - Billing rate: single A100 at `6 CNY/hour`.
 - Deduplication rule: use canonical `summary.csv` detail rows where available; exclude aggregate/interim/partial duplicate tables, handoff build copies, repo mirror copies, and VBench shard/per-prompt summaries when merged summaries exist. Baseline elapsed values repeated across rows are counted once per sample within each result table. Empty or incomplete summaries were supplemented only from `partial_summary.csv`, `summary_interim_prompt01.csv`, or logs containing `inference_compute_elapsed_seconds`.
 - Result: structured/parseable inference compute time `222.267 GPU-hours`; adjusted occupancy `333.401 A100-hours`; estimated cost `2000.40 CNY`.
+
+## 2026-06-24 VBench10 ZEUS / SeaCache Report
+
+- Added `reports/report_vbench10_zeus_threshold_seacache.md`.
+- Report covers only VBench10 experiment environment/settings, per-prompt results, and 10-prompt aggregate results for fixed ZEUS, ZEUS-threshold, and timestep-only SeaCache.
+- Data sources:
+  - `/hy-tmp/wan22_zeus_vbench10_50step_45f_480p_20260624_003030/results/summary.csv`
+  - `/hy-tmp/wan22_zeus_vbench10_50step_45f_480p_20260624_003030/results/aggregate_by_method.csv`
+  - `/hy-tmp/wan22_vbench10_three_cache_full_merge_and_timestep_only_full_20260623/timestep_only_seacache_vbench10_full/wan22_seacache_vbench10_50step_45f_480p_20260618_161845/merged/summary.csv`
+  - `/hy-tmp/wan22_vbench10_three_cache_full_merge_and_timestep_only_full_20260623/timestep_only_seacache_vbench10_full/wan22_seacache_vbench10_50step_45f_480p_20260618_161845/merged/aggregate_by_threshold.csv`
+
+## 2026-06-24 ZEUS Solver Comparison Reports
+
+- Added `reports/report_zeus_dpmpp_ali10_20260624.md` from local fixed-ZEUS `dpm++` ali-10 formal run.
+- Added `reports/report_zeus_dpmpp_vbench10_20260624.md` from local fixed-ZEUS `dpm++` VBench10 run.
+- Added `reports/report_zeus_solver_ali10_vbench10_comparison_20260624.md`, comparing four reports: ali-10/VBench10 crossed with `dpm++`/`unipc`.
 - Largest adjusted-cost components:
   - `/hy-tmp/openvid_100_seacache_trace_data`: `134.696 A100-hours`, `808.18 CNY`.
   - VBench three-cache merged run: `86.679 A100-hours`, `520.07 CNY`.
   - `/hy-tmp/wan22_seacache_openvid100_50step_45f_480p_20260612_002814`: `32.876 A100-hours`, `197.25 CNY`.
+
+## 2026-06-25 Commit And Push
+
+- Reviewed the pending report/log/progress changes and confirmed they are small Markdown handoff artifacts.
+- Prepared to commit the VBench10 ZEUS/SeaCache report set, ZEUS solver comparison reports, session logs, and this progress update.
 
 ## 2026-06-18 Current Repo Remote Handoff
 
