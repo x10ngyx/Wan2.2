@@ -357,6 +357,19 @@ def trace_stats(trace_rows: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
+def release_cache_factory(factory) -> None:
+    if factory is None:
+        return
+    if hasattr(factory, "clear_last_instance"):
+        factory.clear_last_instance()
+        return
+    instance = getattr(factory, "last_instance", None)
+    if instance is not None and hasattr(instance, "clear_runtime_state"):
+        instance.clear_runtime_state()
+    if hasattr(factory, "last_instance"):
+        factory.last_instance = None
+
+
 def generate_one(
     args,
     pipeline,
@@ -695,16 +708,17 @@ def main() -> None:
                     "adaptive_gate_model": args.adaptive_gate_model,
                 },
             )
-            if args.resume_existing and maybe_completed(
+            completed = args.resume_existing and maybe_completed(
                 output,
                 time_file,
                 ffprobe_json,
                 psnr_json,
                 trace_json,
-            ):
+            )
+            if completed:
                 print(f"Skipping existing adaptive SeaCache target {target_psnr} {source_id}")
-                continue
-            print(f"Running adaptive SeaCache target {target_psnr} {source_id} seed {seed}")
+            else:
+                print(f"Running adaptive SeaCache target {target_psnr} {source_id} seed {seed}")
             try:
                 if not (
                     args.resume_existing
@@ -733,6 +747,7 @@ def main() -> None:
                     )
                     trace_rows = extract_trace(summary or {})
                     write_trace(trace_rows, trace_json, trace_csv)
+                    release_cache_factory(adaptive_factory)
                     torch.cuda.empty_cache()
                 if not (args.resume_existing and ffprobe_json.exists() and ffprobe_json.stat().st_size > 0):
                     run_ffprobe(args.ffprobe_bin, output, ffprobe_json)
@@ -774,6 +789,8 @@ def main() -> None:
                     }
                 )
             except Exception as exc:
+                release_cache_factory(adaptive_factory)
+                torch.cuda.empty_cache()
                 write_failed(
                     exp_root,
                     f"{method_id}_{source_id}",

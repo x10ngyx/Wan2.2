@@ -1,0 +1,24 @@
+# 2026-06-24 ZEUS VBench10 Launch
+
+- User requested reusing VBench10 baselines from `experiment_results/wan22_vbench10_three_cache_full_merge_and_timestep_only_full_20260623` and launching the full ZEUS/VBench10 task if GPU was idle.
+- Checked GPU and tmux before launch:
+  - A100 80GB was idle, `0 MiB`, `0%`.
+  - No tmux sessions were running.
+- Updated `experiments/zeus_vbench10_50step_45f_480p/run_batch.py`:
+  - added `--baseline_reuse_root`;
+  - default reuse root points to the imported VBench10 package;
+  - reusable baseline video/time/ffprobe/log artifacts are symlinked into the new experiment root.
+- Updated `run_tmux.sh` and `README.md` to document/pass baseline reuse.
+- Validation:
+  - `python -m py_compile experiments/zeus_vbench10_50step_45f_480p/run_batch.py experiments/zeus_vbench10_50step_45f_480p/summarize_results.py`
+  - `python experiments/zeus_vbench10_50step_45f_480p/run_batch.py --cpu_validate`
+  - `bash -n experiments/zeus_vbench10_50step_45f_480p/run_tmux.sh`
+- Launched:
+  - session: `wan22_zeus_vbench10_20260624_003030`
+  - result root: `/hy-tmp/wan22_zeus_vbench10_50step_45f_480p_20260624_003030`
+  - symlink: `experiment_results/wan22_zeus_vbench10_50step_45f_480p_20260624_003030`
+- First runtime check:
+  - baseline artifacts for `vbench10_001` were reused successfully;
+  - fixed ZEUS generation for `vbench10_001` started;
+  - GPU was active at about `44023 MiB`, `100%`;
+  - no failed files were present.

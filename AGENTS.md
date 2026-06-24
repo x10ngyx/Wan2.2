@@ -62,6 +62,8 @@ export HF_HUB_CACHE=/hy-tmp/hf-cache/hub
 
 多候选实验必须优先使用单进程 batch runner：每个进程只加载一次 WanT2V pipeline/checkpoint shards，然后在同一进程内顺序运行候选。只有为了隔离崩溃、排查显存泄漏或验证冷启动行为时，才使用逐候选独立进程；这种例外必须在实验记录中说明原因。
 
+单进程 batch runner 不能保留历史 cache 实例，尤其是 SeaCache/adaptive SeaCache/replay SeaCache。cache 运行态会持有 GPU tensor（例如 `previous_feature`、`previous_residual`、当前 latent snapshot），只调用 `torch.cuda.empty_cache()` 无法释放仍被 Python 引用的 tensor。每个候选在写完 summary/trace 后，必须显式清理本轮 cache runtime state 并断开 factory 的 `last_instance` 引用；不得用 `instances` 列表累计保存历史 cache 对象。
+
 ## 实验归档要求
 
 每组实验必须完整归档，至少包括：

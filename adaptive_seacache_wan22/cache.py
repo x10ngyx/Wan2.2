@@ -142,6 +142,11 @@ class AdaptiveSeaCacheTimestepCache(SeaCacheTimestepCache):
     ) -> None:
         self._current_latents[key] = latent.detach()
 
+    def clear_runtime_state(self) -> None:
+        self.states.clear()
+        self._key_states.clear()
+        self._current_latents.clear()
+
     def should_reuse_blocks(
         self,
         key: Hashable,
@@ -309,6 +314,11 @@ class ReplaySeaCacheTimestepCache(SeaCacheTimestepCache):
                 result[str(key)]["adaptive_threshold_mean"] = sum(values) / len(values)
         return result
 
+    def clear_runtime_state(self) -> None:
+        self.states.clear()
+        self.decision_trace.clear()
+        self.threshold_path.clear()
+
 def build_adaptive_seacache_factory(
     gate_config: AdaptiveSeaCacheGateConfig,
 ):
@@ -324,7 +334,6 @@ def build_adaptive_seacache_factory(
 
     class AdaptiveSeaCacheFactory:
         def __init__(self) -> None:
-            self.instances: list[AdaptiveSeaCacheTimestepCache] = []
             self.last_instance: AdaptiveSeaCacheTimestepCache | None = None
 
         def __call__(
@@ -332,9 +341,13 @@ def build_adaptive_seacache_factory(
             config: SeaCacheTimestepCacheConfig,
         ) -> AdaptiveSeaCacheTimestepCache:
             cache = AdaptiveSeaCacheTimestepCache(config, gate)
-            self.instances.append(cache)
             self.last_instance = cache
             return cache
+
+        def clear_last_instance(self) -> None:
+            if self.last_instance is not None:
+                self.last_instance.clear_runtime_state()
+            self.last_instance = None
 
     return AdaptiveSeaCacheFactory()
 
@@ -344,7 +357,6 @@ def build_replay_seacache_factory(
 ):
     class ReplaySeaCacheFactory:
         def __init__(self) -> None:
-            self.instances: list[ReplaySeaCacheTimestepCache] = []
             self.last_instance: ReplaySeaCacheTimestepCache | None = None
 
         def __call__(
@@ -352,8 +364,12 @@ def build_replay_seacache_factory(
             config: SeaCacheTimestepCacheConfig,
         ) -> ReplaySeaCacheTimestepCache:
             cache = ReplaySeaCacheTimestepCache(config, threshold_trace)
-            self.instances.append(cache)
             self.last_instance = cache
             return cache
+
+        def clear_last_instance(self) -> None:
+            if self.last_instance is not None:
+                self.last_instance.clear_runtime_state()
+            self.last_instance = None
 
     return ReplaySeaCacheFactory()

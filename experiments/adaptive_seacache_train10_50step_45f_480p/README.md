@@ -24,6 +24,11 @@ For each candidate it archives:
 - per-step adaptive trace JSON and CSV containing predicted threshold,
   SeaCache rel-L1, accumulated rel-L1, and reuse/recompute decision.
 
+Cache lifecycle requirement: because adaptive SeaCache stores GPU tensors in
+per-candidate runtime state, the runner must release the latest cache instance
+after writing trace/summary and before `torch.cuda.empty_cache()`. Do not keep a
+history list of cache instances across candidates.
+
 Launch:
 
 ```bash

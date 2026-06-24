@@ -211,6 +211,18 @@ The main report covers fixed ZEUS, ZEUS-threshold reuse_interp, and the three-ca
 2. Use the consolidated table to define the first adaptive-threshold predictor baseline.
 3. Keep future progress entries concise and append-only from this reset point.
 
+## 2026-06-23 Project Compute Cost Scan
+
+- Scanned experiment result roots under `/hy-tmp`, including `wan22_*` archives and `/hy-tmp/openvid_100_seacache_trace_data`.
+- Cost rule requested by user: actual A100 occupancy is estimated as `inference compute elapsed * 1.5` to account for model loading, debug, save/eval scheduling, and other GPU holding overhead.
+- Billing rate: single A100 at `6 CNY/hour`.
+- Deduplication rule: use canonical `summary.csv` detail rows where available; exclude aggregate/interim/partial duplicate tables, handoff build copies, repo mirror copies, and VBench shard/per-prompt summaries when merged summaries exist. Baseline elapsed values repeated across rows are counted once per sample within each result table. Empty or incomplete summaries were supplemented only from `partial_summary.csv`, `summary_interim_prompt01.csv`, or logs containing `inference_compute_elapsed_seconds`.
+- Result: structured/parseable inference compute time `222.267 GPU-hours`; adjusted occupancy `333.401 A100-hours`; estimated cost `2000.40 CNY`.
+- Largest adjusted-cost components:
+  - `/hy-tmp/openvid_100_seacache_trace_data`: `134.696 A100-hours`, `808.18 CNY`.
+  - VBench three-cache merged run: `86.679 A100-hours`, `520.07 CNY`.
+  - `/hy-tmp/wan22_seacache_openvid100_50step_45f_480p_20260612_002814`: `32.876 A100-hours`, `197.25 CNY`.
+
 ## 2026-06-18 Current Repo Remote Handoff
 
 - Handoff workflow clarified: do not package the current repository into OSS. Keep code in GitHub; put only reusable runtime artifacts such as the packed conda environment in OSS.
@@ -256,8 +268,39 @@ The main report covers fixed ZEUS, ZEUS-threshold reuse_interp, and the three-ca
   - Train source IDs: `openvidhd_part1_085`, `openvidhd_part1_086`, `openvidhd_part1_059`, `openvidhd_part1_057`, `openvidhd_part1_016`, `openvidhd_part1_036`, `openvidhd_part1_093`, `openvidhd_part1_063`, `openvidhd_part1_095`, `openvidhd_part1_058`, `openvidhd_part1_027`, `openvidhd_part1_012`, `openvidhd_part1_020`, `openvidhd_part1_031`, `openvidhd_part1_037`
   - Test/val source IDs: `openvidhd_part1_028`, `openvidhd_part1_030`, `openvidhd_part1_026`, `openvidhd_part1_092`, `openvidhd_part1_055`
 - Baselines are reused from `/hy-tmp/work/Wan2.2/experiment_results/openvid_100_seacache_trace_data`; this runner does not regenerate no-cache baselines.
-- Candidate settings:
+  - Candidate settings:
   - target PSNRs: `20 25 30`
+
+## 2026-06-23 Adaptive Predictor Training Curve Report
+
+- Added training-curve plotting script:
+  - `experiments/adaptive_threshold_predictor/plot_training_curves.py`
+- Generated adaptive predictor figures and summaries:
+  - `reports/assets/adaptive_training_curves/feature_curves_2x2x2.svg`
+  - `reports/assets/adaptive_training_curves/grid_val_curves_by_feature.svg`
+  - `reports/assets/adaptive_training_curves/best_val_loss_heatmap.svg`
+  - `reports/assets/adaptive_training_curves/long_run_curves.svg`
+  - `reports/assets/adaptive_training_curves/training_curve_summary.csv`
+  - `reports/assets/adaptive_training_curves/training_curve_summary.json`
+- Added report:
+  - `reports/report_adaptive_predictor_training_curves.md`
+- Main conclusion:
+  - `2x2x2 temporal_mean` remains the best 3-epoch feature/grid setting, best validation loss `0.012259`.
+  - Larger pooling grids do not improve global best validation loss.
+  - no-feature/noise-feature controls are around `0.01465` validation loss, confirming that real latent-derived features provide useful signal.
+  - 30-epoch curves show early validation optimum followed by overfitting; current experiments should be interpreted with early stopping rather than as fully converged fixed-epoch training.
+
+## 2026-06-23 ZEUS Result Lookup Session
+
+- Reviewed `wan/timestep_cache.py`, `wan/text2video.py`, and existing reports to answer how `zeus` / `zeus-threshold` reuse estimates are produced.
+- Confirmed both methods reuse whole branch denoiser outputs; default `reuse_interp` alternates the first extrapolated `prev_interp` with the latest real recompute output during consecutive reuse runs.
+- Looked up archived ZEUS results without launching new inference:
+  - fixed ZEUS formal 10-prompt root: `/hy-tmp/wan22_zeus_timestep_cache_50step_45f_480p_full_20260608_114307`
+  - ZEUS-threshold reuse_interp 10-prompt root: `/hy-tmp/wan22_zeus_threshold_reuse_interp_10prompt_5th_20260608_195427`
+  - prompt-01 pilot root: `/hy-tmp/wan22_zeus_threshold_prompt01_7th_20260608_162827`
+  - prompt-01 timestep-aware interpolation root: `/hy-tmp/wan22_zeus_threshold_taware_prompt01_5th_20260608_191714`
+- No code, cache logic, experiment artifacts, or result tables were changed.
+
   - total candidates: `60`
   - seed: `42`
   - size: `832*480`
@@ -271,6 +314,25 @@ The main report covers fixed ZEUS, ZEUS-threshold reuse_interp, and the three-ca
 - Launched tmux session `adaptive_seacache_train15_test5` at 2026-06-19 13:55 CST.
 - Experiment root: `/hy-tmp/wan22_adaptive_seacache_train15_test5_50step_45f_480p_20260619_135521`
 - Initial log check showed the adaptive gate checkpoint loaded successfully and no immediate error.
+
+## 2026-06-24 ZEUS VBench10 Experiment Scripts
+
+- Added `experiments/zeus_vbench10_50step_45f_480p/` to rerun fixed ZEUS and ZEUS-threshold on the unified `test_sets/Vbench10/prompts.jsonl` subset.
+- New files:
+  - `run_batch.py`: single-process WanT2V runner; loads the pipeline once, runs 10 no-cache baselines, 10 fixed-ZEUS candidates, and 50 ZEUS-threshold candidates by default.
+  - `summarize_results.py`: writes one-row-per-candidate `results/summary.csv` and aggregate `results/aggregate_by_method.csv/json`.
+  - `run_tmux.sh`: launches the full run in tmux and creates an `experiment_results/` symlink.
+  - `README.md`: documents config, validation, launch, and outputs.
+- Configuration intentionally matches earlier ZEUS experiments:
+  - task `t2v-A14B`, checkpoint `/hy-tmp/models/Wan2.2-T2V-A14B`, seed `42`, size `832*480`, `45` frames, `50` DPM++ steps, `--offload_model`, `--convert_model_dtype`.
+  - fixed ZEUS: acc range `8 <= step < 47`, denominator `3`, modular `0 1`, `reuse_interp`, max interval `6`, lagrange `4/4/24`.
+  - ZEUS-threshold: thresholds `0.005 0.02 0.08 0.20 0.60`, `reuse_interp`, same acc range and max interval.
+  - block cache and CFG cache disabled.
+- Validation completed without launching inference:
+  - `python -m py_compile experiments/zeus_vbench10_50step_45f_480p/run_batch.py experiments/zeus_vbench10_50step_45f_480p/summarize_results.py`
+  - `python experiments/zeus_vbench10_50step_45f_480p/run_batch.py --cpu_validate`
+  - `python experiments/zeus_vbench10_50step_45f_480p/run_batch.py --cpu_validate --prompt_limit 1 --thresholds '0.005 0.02'`
+- Full GPU experiment was not launched in this script-preparation session.
 
 ## 2026-06-19 Adaptive SeaCache Predictor Overhead Setup
 
@@ -1231,3 +1293,230 @@ Fixed SeaCache comparison update:
   - `third_party/` is about `301M`, mainly the copied AdaCache/Open-Sora source tree and included demo assets; no file larger than `20M` was found in the new code/directories checked.
   - ignored `__pycache__/` files were not staged.
 - No new validation was run during this commit-only session; validation status is the one recorded in the individual 2026-06-16 progress entries.
+
+## 2026-06-23 Adaptive SeaCache Cache Lifecycle OOM Fix
+
+- Fixed the adaptive SeaCache batch-runner OOM root cause: the factory kept a historical `instances` list of adaptive/replay SeaCache cache objects. Those objects retain GPU tensors in runtime state, including SeaCache `previous_feature`/`previous_residual` and adaptive current-latent snapshots, so `torch.cuda.empty_cache()` could not free memory while old cache objects were still referenced.
+- Updated `adaptive_seacache_wan22/cache.py`:
+  - removed historical cache-instance retention from adaptive and replay factories;
+  - added `clear_runtime_state()` on adaptive and replay cache classes;
+  - added factory `clear_last_instance()` hooks that clear runtime state and drop the latest cache reference after trace/summary extraction.
+- Updated adaptive batch runners to release cache state after writing per-candidate traces and also on exception paths:
+  - `experiments/adaptive_seacache_ali_prompt12_50step_45f_480p/run_batch.py`
+  - `experiments/adaptive_seacache_train10_50step_45f_480p/run_batch.py`
+  - `experiments/adaptive_seacache_train15_test5_50step_45f_480p/run_batch.py`
+  - `experiments/adaptive_seacache_overhead_train5_50step_45f_480p/run_batch.py`
+- Documentation/spec updates:
+  - `AGENTS.md` now explicitly states that single-process batch runners must not retain historical SeaCache/adaptive SeaCache/replay SeaCache instances and must release cache runtime state after each candidate.
+  - Adaptive prototype and experiment READMEs now call out the cache lifecycle requirement.
+  - The overhead experiment README was corrected to describe the train5 online-vs-replay overhead experiment instead of the copied train15/test5 text.
+- Validation:
+  - `python -m py_compile` passed for `adaptive_seacache_wan22/cache.py` and all four adaptive SeaCache runners.
+  - `bash -n` passed for the four adaptive SeaCache `run_tmux.sh` launch scripts.
+  - `rg` confirmed no remaining `self.instances` / `instances.append` retention in the adaptive SeaCache cache module or runners.
+
+## 2026-06-23 VBench10 OSS Result/Report Import
+
+- User requested importing two OSS handoff packages from `oss://datasets/`:
+  - `wan22_vbench10_reports_and_experiment_scripts_20260623.tar.gz`
+  - `wan22_vbench10_three_cache_full_merge_and_timestep_only_full_20260623.tar.gz`
+- Logged into OSS with the provided Hengyuan account and downloaded both packages plus checksum archives to `/hy-tmp/oss_downloads_20260623/`.
+- SHA256 verification passed:
+  - reports/scripts package: `a95282ae6e567e69b033ffcbc46abb657a4a8f7feaaee9fd87e232e20612b9bc`
+  - full results package: `1211cb89b75b75b340a9e53910db52f9e1c981b1e12694b400fc66ce03be4a84`
+- Imported reports into `reports/`:
+  - `reports/report_three_cache_sea_vbench10_merge.md`
+  - `reports/report_timestep_only_seacache_vbench10.md`
+  - `reports/report_compare_three_cache_merge_vs_timestep_only_vbench10.md`
+- Imported experiment scripts into `experiments/`:
+  - `experiments/seacache_vbench10_50step_45f_480p/`
+  - `experiments/three_cache_sea_vbench10_50step_45f_480p/`
+- Extracted full runtime results to:
+  - `/hy-tmp/wan22_vbench10_three_cache_full_merge_and_timestep_only_full_20260623/`
+- Added workspace symlink:
+  - `experiment_results/wan22_vbench10_three_cache_full_merge_and_timestep_only_full_20260623 -> /hy-tmp/wan22_vbench10_three_cache_full_merge_and_timestep_only_full_20260623`
+- Result package contents:
+  - `three_cache_sea_vbench10_full/`: full VBench10 three-cache Sea-style result set with `shard_gpu0_p000_004`, `shard_gpu1_p005_009`, and merged summary/aggregate tables.
+  - `timestep_only_seacache_vbench10_full/`: full VBench10 timestep-only SeaCache result set from `/hy-tmp/wan22_seacache_vbench10_50step_45f_480p_20260618_161845`, including shard outputs, merged tables, videos, logs, ffprobe, and PSNR artifacts.
+- Lightweight integrity check after extraction:
+  - `760` mp4 files
+  - `26` csv files
+  - `1532` json files
+  - `0` files under `failed/`
+- Disk note: `/hy-tmp` had about `69G` free after extraction. Downloaded tarballs remain in `/hy-tmp/oss_downloads_20260623/` and can be removed later if space is needed.
+
+## 2026-06-23 AdaCache VBench10 Reproduction OSS Import
+
+- User requested importing the full AdaCache reproduction archive from:
+  - `oss://datasets/adacache_reproduction_20260623/adacache_wan22_vbench10_reproduction_20260623.tar.gz`
+- Downloaded the archive to:
+  - `/hy-tmp/oss_downloads_20260623/adacache_wan22_vbench10_reproduction_20260623.tar.gz`
+- No separate OSS checksum archive was listed for this object; local SHA256 was recorded:
+  - `db66e61a1180f1c91e0b3b0643bdd07baf813b3c8dbb2a293164a61932b7b7a5`
+- Extracted the full archive to:
+  - `/hy-tmp/adacache_wan22_vbench10_reproduction_20260623/`
+- Added workspace symlink:
+  - `experiment_results/adacache_wan22_vbench10_reproduction_20260623 -> /hy-tmp/adacache_wan22_vbench10_reproduction_20260623`
+- Imported report into `reports/`:
+  - `reports/adacache_vbench10_reproduction_report.md`
+- Imported experiment scripts into:
+  - `experiments/adacache_wan22_vbench10_reproduction_20260623/`
+  - imported files: `README.md`, `run_batch.py`, `run_one_method.py`, `run_tmux.sh`
+  - `__pycache__/` and `*.pyc` were excluded from the repository copy.
+- Result package contents:
+  - `experiment_results/baseline/`: 10 no-cache VBench10 baseline videos.
+  - `experiment_results/slow/`: 10 AdaCache slow videos.
+  - `experiment_results/fast/`: 10 AdaCache fast videos.
+  - `experiment_results/results/summary_all.csv`
+  - `experiment_results/results/aggregate_all.json`
+  - per-shard summaries, commands, logs, ffprobe artifacts, PSNR artifacts, manifests, launch envs, and GPU/runtime records.
+- Lightweight integrity check after extraction:
+  - `30` mp4 files
+  - `35` csv files
+  - `85` json files
+  - `0` files under `failed/`
+- Archived report summary:
+  - AdaCache slow: mean speedup `1.545x`, mean PSNR `23.561 dB`
+  - AdaCache fast: mean speedup `2.702x`, mean PSNR `18.635 dB`
+  - completion: 10/10 baseline videos, 10/10 slow videos, 10/10 fast videos, 20/20 PSNR JSON files, no failed samples.
+
+## 2026-06-23 Fixed SeaCache Train15/Test5 OpenVid20 Launch
+
+- User requested a timestep-only fixed-threshold SeaCache control on the same 20 OpenVid prompts used by the adaptive SeaCache train15/test5 report.
+- Thresholds selected for the control run: `0.1`, `0.2`, `0.4`, `0.6`.
+- Added experiment runner:
+  - `experiments/seacache_train15_test5_50step_45f_480p/run_batch.py`
+  - `experiments/seacache_train15_test5_50step_45f_480p/run_tmux.sh`
+  - `experiments/seacache_train15_test5_50step_45f_480p/README.md`
+- Runner behavior:
+  - reuses no-cache OpenVid baselines from `experiment_results/openvid_100_seacache_trace_data`;
+  - uses the same predictor split JSON and random seed `20260619` as adaptive train15/test5;
+  - loads WanT2V once and runs 80 candidates: 20 prompts x 4 thresholds;
+  - archives videos, commands, logs, ffprobe JSON, FFmpeg PSNR JSON/logs, per-candidate summary, aggregate-by-threshold table, and failed records.
+- Validation before launch:
+  - GPU confirmed: `NVIDIA A100 80GB PCIe`, 81920 MiB, driver 570.211.01.
+  - `python -m py_compile experiments/seacache_train15_test5_50step_45f_480p/run_batch.py` passed.
+  - `run_batch.py --cpu_validate --thresholds '0.1 0.2 0.4 0.6'` passed with 20 prompts, 15 train / 5 test, 80 expected candidates, and no missing baseline artifacts.
+  - `bash -n experiments/seacache_train15_test5_50step_45f_480p/run_tmux.sh` passed.
+- Launched tmux session:
+  - session: `seacache_train15_test5`
+  - result root: `/hy-tmp/wan22_seacache_train15_test5_50step_45f_480p_20260623_160513`
+  - workspace symlink: `experiment_results/wan22_seacache_train15_test5_50step_45f_480p_20260623_160513`
+- Initial runtime check:
+  - runner reached fixed-threshold SeaCache sampling for `openvidhd_part1_085`, threshold `0.1`;
+  - GPU memory was about `47575 MiB` with `100%` utilization;
+  - no failed files and no completed mp4 files at the first sampling check.
+
+## 2026-06-24 Fixed SeaCache Train15/Test5 OpenVid20 Completed
+
+- Fixed-threshold timestep-only SeaCache control completed successfully.
+- Result root:
+  - `/hy-tmp/wan22_seacache_train15_test5_50step_45f_480p_20260623_160513`
+- Workspace symlink:
+  - `experiment_results/wan22_seacache_train15_test5_50step_45f_480p_20260623_160513`
+- Completion/integrity:
+  - candidate mp4 files: `80/80`
+  - PSNR JSON files: `80/80`
+  - ffprobe candidate JSON files: `80/80`
+  - command records: `80/80`
+  - failed files: `0`
+  - result tables written under `results/`: `summary.csv`, `summary.json`, `aggregate_by_threshold.csv`, `aggregate_by_threshold.json`
+- Aggregate results across all 20 prompts:
+  - threshold `0.1`: overall speedup `1.138x`, mean PSNR `42.861 dB`, min PSNR `34.33 dB`
+  - threshold `0.2`: overall speedup `1.607x`, mean PSNR `30.548 dB`, min PSNR `16.88 dB`
+  - threshold `0.4`: overall speedup `2.467x`, mean PSNR `23.936 dB`, min PSNR `15.93 dB`
+  - threshold `0.6`: overall speedup `3.176x`, mean PSNR `21.229 dB`, min PSNR `15.04 dB`
+- Split means:
+  - train threshold `0.1/0.2/0.4/0.6`: mean PSNR `42.483/30.821/23.794/20.634 dB`, mean speedup `1.137/1.608/2.468/3.178x`
+  - test threshold `0.1/0.2/0.4/0.6`: mean PSNR `43.993/29.726/24.361/23.014 dB`, mean speedup `1.143/1.606/2.464/3.173x`
+- Immediate comparison against the adaptive SeaCache train15/test5 report:
+  - fixed SeaCache `0.6` is close to adaptive target-20 speed and slightly higher mean PSNR: `3.176x`, `21.229 dB` vs adaptive target-20 `3.171x`, `21.108 dB`
+  - fixed SeaCache `0.4` is close to adaptive target-25 speed and slightly higher mean PSNR: `2.467x`, `23.936 dB` vs adaptive target-25 `2.461x`, `23.407 dB`
+  - fixed SeaCache `0.2` has much higher mean PSNR but lower speed than adaptive target-30: `1.607x`, `30.548 dB` vs adaptive target-30 `1.904x`, `27.221 dB`
+- Note: another tmux session, `wan22_zeus_vbench10_20260624_003030`, is currently active and using the GPU; this is unrelated to the completed fixed SeaCache control run.
+
+## 2026-06-24 Fixed vs Adaptive SeaCache OpenVid20 Pareto Charts
+
+- User requested charts matching the style of `reports/assets/vbench10_three_cache/`.
+- Added plotting script:
+  - `reports/plot_seacache_adaptive_train15_test5.py`
+- Generated chart assets under:
+  - `reports/assets/seacache_adaptive_train15_test5/`
+- Generated three chart sets, each in PNG/PDF/SVG:
+  - `openvid20_fixed_seacache_pareto_scatter`
+  - `openvid20_adaptive_seacache_pareto_scatter`
+  - `openvid20_fixed_vs_adaptive_seacache_pareto_overlay`
+- Also wrote plot aggregate/source metadata:
+  - `openvid20_fixed_seacache_plot_aggregate.csv`
+  - `openvid20_adaptive_seacache_plot_aggregate.csv`
+  - `plot_inputs.json`
+- Validation:
+  - `python -m py_compile reports/plot_seacache_adaptive_train15_test5.py` passed.
+  - Script ran successfully with conda env Python.
+  - Visual inspection of the overlay PNG passed after shortening the source note to avoid an overly wide bbox.
+- Important metric note:
+  - Plot aggregate speedup uses total baseline compute time divided by total candidate compute time for each method/setting. This matches the fixed SeaCache aggregate table and differs slightly from the adaptive report's mean-of-per-prompt speedup values.
+
+## 2026-06-24 Train-Split Fixed vs Adaptive SeaCache Tables/Chart
+
+- Extended `reports/plot_seacache_adaptive_train15_test5.py` to emit train-split-only result tables and an overlay Pareto chart.
+- New/updated outputs under `reports/assets/seacache_adaptive_train15_test5/`:
+  - `openvid20_train_fixed_seacache_results.csv` (`60` rows = 15 train prompts x 4 thresholds)
+  - `openvid20_train_adaptive_seacache_results.csv` (`45` rows = 15 train prompts x 3 targets)
+  - `openvid20_train_fixed_seacache_aggregate.csv`
+  - `openvid20_train_adaptive_seacache_aggregate.csv`
+  - `openvid20_train_fixed_vs_adaptive_seacache_aggregate.csv`
+  - `openvid20_train_fixed_vs_adaptive_seacache_pareto_overlay.{png,pdf,svg}`
+- Train-split aggregate results:
+  - fixed threshold `0.1/0.2/0.4/0.6`: speedup `1.137/1.607/2.468/3.177x`, mean PSNR `42.483/30.821/23.794/20.634 dB`
+  - adaptive target `20/25/30`: speedup `3.159/2.387/1.840x`, mean PSNR `20.481/23.137/27.477 dB`
+- Validation:
+  - plotting script ran successfully;
+  - `python -m py_compile reports/plot_seacache_adaptive_train15_test5.py` passed;
+  - visual inspection of the train overlay passed after correcting the x-axis label to 15 train prompts;
+  - temporary `reports/__pycache__/` was removed.
+
+## 2026-06-24 ZEUS VBench10 Launch With Reused Baselines
+
+- Updated `experiments/zeus_vbench10_50step_45f_480p/run_batch.py` and `run_tmux.sh` so VBench10 no-cache baselines are reused by default from:
+  - `/hy-tmp/work/Wan2.2/experiment_results/wan22_vbench10_three_cache_full_merge_and_timestep_only_full_20260623`
+- Baseline reuse behavior:
+  - finds existing `baseline/{sample_id}.mp4`, `logs/baseline_{sample_id}.time`, `ffprobe/baseline_{sample_id}.json`, and baseline log artifacts in the imported VBench10 result package;
+  - symlinks those artifacts into the new ZEUS experiment root using the standard local layout;
+  - does not regenerate no-cache baselines unless `--baseline_reuse_root ""` is passed directly to `run_batch.py`.
+- Validation before launch:
+  - `python -m py_compile experiments/zeus_vbench10_50step_45f_480p/run_batch.py experiments/zeus_vbench10_50step_45f_480p/summarize_results.py` passed.
+  - `python experiments/zeus_vbench10_50step_45f_480p/run_batch.py --cpu_validate` passed with 10 reusable baselines found, 0 expected baseline generations, 10 fixed-ZEUS candidates, and 50 ZEUS-threshold candidates.
+  - `bash -n experiments/zeus_vbench10_50step_45f_480p/run_tmux.sh` passed.
+  - GPU was idle before launch: A100 80GB, `0 MiB`, `0%`; no tmux sessions were running.
+- Launched full tmux run:
+  - session: `wan22_zeus_vbench10_20260624_003030`
+  - result root: `/hy-tmp/wan22_zeus_vbench10_50step_45f_480p_20260624_003030`
+  - workspace symlink: `experiment_results/wan22_zeus_vbench10_50step_45f_480p_20260624_003030`
+  - thresholds: `0.005 0.02 0.08 0.20 0.60`
+  - fixed ZEUS config: acc range `8-47`, denominator `3`, modular `0 1`, `reuse_interp`, max interval `6`, lagrange `4/4/24`.
+- Initial runtime check:
+  - runner successfully reused baseline artifacts for `vbench10_001`;
+  - fixed ZEUS generation for `vbench10_001` started;
+  - GPU was active at about `44023 MiB` and `100%` utilization;
+  - no failed files were present at the first runtime check.
+
+## 2026-06-24 ZEUS VBench10 Result Check
+
+- Checked completed ZEUS VBench10 run:
+  - result root: `/hy-tmp/wan22_zeus_vbench10_50step_45f_480p_20260624_003030`
+  - workspace symlink: `experiment_results/wan22_zeus_vbench10_50step_45f_480p_20260624_003030`
+- Completion status:
+  - fixed ZEUS videos/PSNR: `10/10`
+  - ZEUS-threshold videos/PSNR: `50/50`
+  - result rows: `60`
+  - failed files: `0`
+  - ffprobe JSON files: `70`; all checked as `832x480`, `45` frames.
+- Aggregate results from `results/aggregate_by_method.csv`:
+  - fixed ZEUS: `2.021x`, mean PSNR `23.996 dB`, min PSNR `14.96 dB`, timestep reuse/recompute `250/250`.
+  - ZEUS-threshold `0.005`: `1.129x`, mean PSNR `23.020 dB`, min PSNR `14.40 dB`, reuse/recompute `50/450`.
+  - ZEUS-threshold `0.02`: `1.604x`, mean PSNR `20.868 dB`, min PSNR `14.31 dB`, reuse/recompute `184/316`.
+  - ZEUS-threshold `0.08`: `2.282x`, mean PSNR `20.690 dB`, min PSNR `14.87 dB`, reuse/recompute `279/221`.
+  - ZEUS-threshold `0.20`: `2.648x`, mean PSNR `20.707 dB`, min PSNR `14.92 dB`, reuse/recompute `310/190`.
+  - ZEUS-threshold `0.60`: `2.793x`, mean PSNR `20.734 dB`, min PSNR `14.91 dB`, reuse/recompute `320/180`.
+- Current environment note at check time: `nvidia-smi` returned `No devices were found`; results were checked from disk after the tmux run completed.

@@ -54,3 +54,10 @@ The Wan log line `Timestep cache summary: ...` includes
   `--block_cache none` and `--cfg_cache none` for the first test.
 - `--seacache_threshold` is still required by the upstream CLI but only serves
   as the default config value; the adaptive cache overrides it for each step.
+- Batch runners must not retain historical adaptive or replay SeaCache cache
+  instances. SeaCache runtime state keeps GPU tensors such as
+  `previous_feature`, `previous_residual`, and the current latent snapshot, so
+  referenced old cache objects prevent `torch.cuda.empty_cache()` from freeing
+  memory and can cause late-run OOM. After serializing each candidate's summary
+  and trace, call the factory `clear_last_instance()` hook before starting the
+  next candidate.

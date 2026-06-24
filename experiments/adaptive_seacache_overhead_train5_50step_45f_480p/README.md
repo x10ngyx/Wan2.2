@@ -1,37 +1,42 @@
-# Adaptive SeaCache Train15 Test5 OpenVid
+# Adaptive SeaCache Overhead Train5
 
-Runs timestep-only adaptive SeaCache on 20 OpenVid prompts from the adaptive
-predictor split:
+Measures adaptive predictor overhead on 5 prompts selected from the adaptive
+SeaCache train-prompt set. For each prompt and target PSNR value, the runner
+executes two matching candidates:
 
-- 15 prompts sampled from `train_sample_ids`;
-- 5 prompts sampled from `val_sample_ids`, used here as the held-out test set.
+- `online_adaptive`: runs the predictor at each SeaCache decision and records
+  predictor timing in the per-step trace;
+- `replay_threshold`: replays the recorded threshold trace without running the
+  predictor, preserving the same reuse/recompute decisions when the trace is
+  deterministic.
 
-The default random seed is `20260619`. Existing no-cache OpenVid baselines are
-reused from:
+Existing no-cache OpenVid baselines are reused from:
 
 ```text
 /hy-tmp/work/Wan2.2/experiment_results/openvid_100_seacache_trace_data
 ```
 
-The runner does not regenerate baselines. It loads WanT2V once and sequentially
-runs 60 adaptive candidates: 20 prompts times target PSNR values `20`, `25`,
-and `30`.
-
 Each candidate archives the generated video, ffprobe JSON, FFmpeg PSNR against
 the reused baseline, raw log, compute-time file, command record, and per-step
-adaptive trace JSON/CSV with predicted threshold, rel-L1, accumulated rel-L1,
-and reuse/recompute decision.
+trace JSON/CSV. The summary table reports predictor timing for online runs and
+online-vs-replay elapsed differences for overhead estimation.
+
+Cache lifecycle requirement: both online adaptive and replay SeaCache cache
+objects hold GPU tensors in runtime state. The runner must release the latest
+cache instance after writing each trace/summary and before
+`torch.cuda.empty_cache()`. Do not keep historical cache instances across
+candidates or online/replay pairs.
 
 Launch:
 
 ```bash
-bash experiments/adaptive_seacache_train15_test5_50step_45f_480p/run_tmux.sh
+bash experiments/adaptive_seacache_overhead_train5_50step_45f_480p/run_tmux.sh
 ```
 
 CPU validation:
 
 ```bash
 /hy-tmp/miniconda3/envs/Wan2.2/bin/python \
-  experiments/adaptive_seacache_train15_test5_50step_45f_480p/run_batch.py \
+  experiments/adaptive_seacache_overhead_train5_50step_45f_480p/run_batch.py \
   --cpu_validate
 ```

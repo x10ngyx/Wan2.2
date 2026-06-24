@@ -384,6 +384,19 @@ def trace_stats(trace_rows: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
+def release_cache_factory(factory) -> None:
+    if factory is None:
+        return
+    if hasattr(factory, "clear_last_instance"):
+        factory.clear_last_instance()
+        return
+    instance = getattr(factory, "last_instance", None)
+    if instance is not None and hasattr(instance, "clear_runtime_state"):
+        instance.clear_runtime_state()
+    if hasattr(factory, "last_instance"):
+        factory.last_instance = None
+
+
 def load_replay_threshold_trace(csv_path: Path) -> dict[tuple[str, str, int], float]:
     rows = list(csv.DictReader(csv_path.open(encoding="utf-8")))
     trace: dict[tuple[str, str, int], float] = {}
@@ -798,6 +811,7 @@ def main() -> None:
             online_psnr_log = exp_root / "psnr" / "online" / label / f"{source_id}.log"
             online_trace_json = exp_root / "traces" / "online" / label / f"{source_id}.json"
             online_trace_csv = exp_root / "traces" / "online" / label / f"{source_id}.csv"
+            replay_factory = None
 
             try:
                 wan_text2video.SeaCacheTimestepCache = adaptive_factory
@@ -827,6 +841,7 @@ def main() -> None:
                     )
                     trace_rows = extract_trace(summary or {})
                     write_trace(trace_rows, online_trace_json, online_trace_csv)
+                    release_cache_factory(adaptive_factory)
                     torch.cuda.empty_cache()
                     run_ffprobe(args.ffprobe_bin, online_output, online_ffprobe)
                     run_psnr(args.python_bin, tools_dir, baseline_video, online_output, online_psnr, online_psnr_log)
@@ -895,6 +910,7 @@ def main() -> None:
                     )
                     replay_trace_rows = extract_trace(replay_summary or {})
                     write_trace(replay_trace_rows, replay_trace_json, replay_trace_csv)
+                    release_cache_factory(replay_factory)
                     torch.cuda.empty_cache()
                     run_ffprobe(args.ffprobe_bin, replay_output, replay_ffprobe)
                     run_psnr(args.python_bin, tools_dir, baseline_video, replay_output, replay_psnr, replay_psnr_log)
@@ -932,6 +948,10 @@ def main() -> None:
                 wan_text2video.SeaCacheTimestepCache = adaptive_factory
             except Exception as exc:
                 wan_text2video.SeaCacheTimestepCache = adaptive_factory
+                release_cache_factory(adaptive_factory)
+                if "replay_factory" in locals():
+                    release_cache_factory(replay_factory)
+                torch.cuda.empty_cache()
                 write_failed(
                     exp_root,
                     f"overhead_{label}_{source_id}",
