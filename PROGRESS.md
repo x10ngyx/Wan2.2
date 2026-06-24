@@ -1541,3 +1541,12 @@ Fixed SeaCache comparison update:
   - ZEUS-threshold `0.20`: `2.648x`, mean PSNR `20.707 dB`, min PSNR `14.92 dB`, reuse/recompute `310/190`.
   - ZEUS-threshold `0.60`: `2.793x`, mean PSNR `20.734 dB`, min PSNR `14.91 dB`, reuse/recompute `320/180`.
 - Current environment note at check time: `nvidia-smi` returned `No devices were found`; results were checked from disk after the tmux run completed.
+
+## 2026-06-25 VS Code Remote Stability Fix
+
+- Investigated repeated VS Code Remote disconnects showing "remote host terminated 3 times within 5 minutes".
+- Found recent VS Code Remote logs where Extension Host was repeatedly terminated by `SIGKILL` shortly after startup; system disk, memory, and inode usage were not the cause.
+- Added `.vscode/settings.json` to exclude large experiment/model/cache symlinks and disable expensive Python/Pylance indexing/test discovery for this workspace.
+- Updated `.gitignore` so only `.vscode/settings.json` is tracked while other `.vscode` local state remains ignored.
+- After applying the workspace settings and reconnecting, observed Extension Host staying alive for more than six minutes with CPU reduced from startup spikes to single digits; the earlier 30-60 second `SIGKILL` loop did not recur during the observation window.
+- No inference, PSNR, or dataset jobs were run.
