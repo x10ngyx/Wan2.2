@@ -30,6 +30,7 @@ def parse_psnr_stats(stats_path: Path):
 def resolve_ffmpeg() -> str:
     candidates = [
         shutil.which("ffmpeg"),
+        "/hy-tmp/env/Wan2.2/bin/ffmpeg",
         "/hy-tmp/miniconda3/envs/Wan2.2/bin/ffmpeg",
     ]
     for candidate in candidates:

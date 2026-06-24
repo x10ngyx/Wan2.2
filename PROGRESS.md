@@ -1550,3 +1550,16 @@ Fixed SeaCache comparison update:
 - Updated `.gitignore` so only `.vscode/settings.json` is tracked while other `.vscode` local state remains ignored.
 - After applying the workspace settings and reconnecting, observed Extension Host staying alive for more than six minutes with CPU reduced from startup spikes to single digits; the earlier 30-60 second `SIGKILL` loop did not recur during the observation window.
 - No inference, PSNR, or dataset jobs were run.
+
+## 2026-06-25 A800-2 Merge
+
+- Merged remote branch `x10ngyx/A800-2` into `main`.
+- User decision for conflicts: keep both versions of the conflicting ZEUS VBench10 scripts without attempting to fuse them.
+- Resolution:
+  - Kept the existing `main` versions at `experiments/zeus_vbench10_50step_45f_480p/run_batch.py` and `summarize_results.py`.
+  - Saved the A800-2 versions as a separate experiment under `experiments/zeus_unipc_vbench10_50step_45f_480p/`.
+- A800-2's only actual modification to a pre-existing main-tracked file was adding `/hy-tmp/env/Wan2.2/bin/ffmpeg` as an FFmpeg fallback in `experiments/zeus_timestep_cache_50step_45f_480p/compute_psnr.py`.
+- Validation:
+  - `python -m py_compile` passed for the main ZEUS VBench10 scripts, the new ZEUS UniPC VBench10 scripts, and `compute_psnr.py`.
+  - `git diff --cached --check` passed.
+- No inference, PSNR, or dataset jobs were run.
