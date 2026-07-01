@@ -2,7 +2,7 @@
 
 This top-level package contains the adaptive threshold prediction work, separate
 from the Wan2.2 generation runners. The current stage is timestep-cache-only, so
-`ImprovedAdaCacheGate` predicts one threshold in `[0, 1]`.
+`ImprovedAdaCacheGate` predicts one SeaCache threshold.
 
 ## Data
 
@@ -31,13 +31,23 @@ The model accepts both single trace tensors `[C, T, H, W]` and batched tensors
   `AdaptiveAvgPool3d((2, 2, 2))` output shape
 - feature projector: maps the pooled feature to `hidden_dim` before fusion, so
   the prediction head stays fixed when testing different feature inputs
-- prediction head: fixed small MLP with a final `Sigmoid`
+- prediction head: fixed small MLP producing one raw logit
 
 Output:
 
 ```text
-threshold: [B, 1], value range [0, 1]
+threshold: [B, 1], value range [min_threshold, max_threshold]
 ```
+
+The MLP family uses the same output mapping as the MiniDiT/Transformer
+predictor:
+
+```text
+threshold = min_threshold + sigmoid(raw) * (max_threshold - min_threshold)
+```
+
+The default range is `[0.10, 0.80]`, matching the SeaCache threshold candidates
+used by the current cached-feature training data.
 
 The feature ablation keeps the condition branch and prediction head fixed, and
 only changes the latent-derived feature input:
@@ -159,3 +169,112 @@ Then train from the cache:
 
 The cached run saves per-feature configs, splits, best/final checkpoints,
 metrics, validation predictions, and summary CSV/JSON files.
+
+## Multi-Feature MLP
+
+The legacy single-feature MLP path remains available through `--feature_set` for
+the original ablations. Multi-feature MLP runs use gated fusion: each feature is
+encoded by its own small MLP, and the timestep/PSNR condition branch predicts a
+softmax gate over feature embeddings.
+
+```bash
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.train_gate \
+  --model_type mlp \
+  --cache_dir /hy-tmp/wan22_adaptive_threshold_feature_cache_candidate_inverse_20260616_012409 \
+  --feature_sets latent_pool temporal_mean temporal_var frame_diff_mean frame_diff_var \
+  --dataset_mode candidate_inverse \
+  --epochs 30 \
+  --batch_size 256 \
+  --hidden_dim 64 \
+  --min_threshold 0.10 \
+  --max_threshold 0.80 \
+  --device cuda \
+  --num_workers 4 \
+  --out_dir /hy-tmp/wan22_adaptive_threshold_mlp_gated_5feature
+```
+
+With `--cache_dir`, the dataset loads each corresponding
+`features_<feature_set>.pt` file and returns per-feature tensors to the gated
+model. Without `--cache_dir`, `GatedMultiFeatureAdaCacheGate` extracts the same
+feature set list from raw latents at training time.
+
+The recommended first gated feature set is:
+
+```text
+latent_pool temporal_mean temporal_var frame_diff_mean frame_diff_var
+```
+
+This uses the full cached pooled-feature set: raw pooled latent, temporal mean,
+temporal variance, and first-order frame-difference mean/variance. The
+multi-feature path still keeps these as separate per-feature tensors and fuses
+them with a learned softmax gate; it does not concatenate the raw feature
+vectors directly.
+
+## MiniDiT CLS Predictor
+
+The recommended MiniDiT-CLS model uses raw traced latents and a learned Conv3d
+patch embedding:
+
+```text
+latent [B,16,12,60,104]
+  -> Conv3d(16, 96, kernel_size=(3,12,8), stride=(3,12,8))
+  -> tokens over grid [4,5,13]
+  -> CLS Transformer readout
+```
+
+Train it directly from the trace data:
+
+```bash
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.train_gate \
+  --model_type mini_dit_cls \
+  --out_dir /hy-tmp/wan22_adaptive_threshold_mini_dit_cls_3x12x8_d96_l2 \
+  --dataset_mode candidate_inverse \
+  --batch_size 64 \
+  --epochs 30 \
+  --lr 3e-4 \
+  --min_lr 1e-5 \
+  --warmup_steps 500 \
+  --weight_decay 1e-4 \
+  --smooth_l1_beta 0.02 \
+  --grad_clip 1.0 \
+  --early_stop_patience 5 \
+  --dit_dim 96 \
+  --dit_layers 2 \
+  --dit_heads 4 \
+  --dit_mlp_ratio 2.0 \
+  --dit_dropout 0.05 \
+  --dit_patch_size 3 12 8 \
+  --min_threshold 0.10 \
+  --max_threshold 0.80 \
+  --save_val_predictions \
+  --save_epoch_val_predictions \
+  --device cuda \
+  --num_workers 4
+```
+
+The checkpoint metadata includes the feature extractor configuration:
+
+```text
+type = learned_conv3d_patch_embedding
+input_shape = [16, 12, 60, 104]
+patch_size = [3, 12, 8]
+token_grid_shape = [4, 5, 13]
+token_count = 260
+```
+
+The MiniDiT training path writes:
+
+```text
+config.json
+split.json
+model_summary.json
+epoch_metrics.jsonl
+epoch_metrics.csv
+metrics.json
+best_model.pt
+best_model_checkpoint.pt
+final_model.pt
+final_model_checkpoint.pt
+val_predictions.csv
+val_predictions_epoch_*.csv  # only with --save_epoch_val_predictions
+```

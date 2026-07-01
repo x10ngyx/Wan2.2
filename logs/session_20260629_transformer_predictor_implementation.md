@@ -1,0 +1,25 @@
+# 2026-06-29 Transformer Predictor Implementation
+
+- Implemented the MiniDiT-CLS adaptive threshold predictor training path requested by the user.
+- Modified files:
+  - `adaptive_threshold_predictor/models.py`
+  - `adaptive_threshold_predictor/data.py`
+  - `adaptive_threshold_predictor/train_gate.py`
+  - `adaptive_threshold_predictor/README.md`
+- Added file:
+  - `adaptive_threshold_predictor/build_grid_feature_cache.py`
+- Main additions:
+  - `MiniDiTCLSAdaptiveThresholdPredictor`
+  - `GridMLPThresholdPredictor`
+  - fixed pooled-grid feature dataset/cache path
+  - training CLI options for `--model_type mini_dit_cls` and `--model_type grid_mlp`
+  - richer training artifacts: config, split, model summary, epoch JSONL/CSV metrics, final metrics, checkpoints with metadata, final/per-epoch validation predictions.
+- Validation:
+  - `python -m py_compile adaptive_threshold_predictor/models.py adaptive_threshold_predictor/data.py adaptive_threshold_predictor/build_grid_feature_cache.py adaptive_threshold_predictor/train_gate.py`
+  - `git diff --check` for the modified adaptive predictor files
+  - built a CPU 16-example grid cache at `/hy-tmp/wan22_mini_dit_grid_cache_smoke_20260629`, grid shape `[16, 4, 5, 13]`
+  - ran 1-epoch CPU smoke tests for reduced-size MiniDiT and grid-MLP models:
+    - `/hy-tmp/wan22_mini_dit_train_smoke_20260629_small`
+    - `/hy-tmp/wan22_grid_mlp_train_smoke_20260629_small`
+- Smoke-test note: the 16-example debug cache contains only one `sample_id`, so the sample-level validation split is empty. The trainer now records `validation_empty=true` and saves best by train MAE only for this degenerate debug case. Full training should use the normal multi-sample dataset and select best by validation MAE.
+- No formal full-data training or adaptive inference experiment was launched.

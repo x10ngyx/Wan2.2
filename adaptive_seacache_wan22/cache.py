@@ -3,13 +3,19 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 from typing import Hashable, Optional
 
 import torch
 from torch import nn
 
-from adaptive_threshold_predictor.models import CachedFeatureAdaCacheGate
+from adaptive_threshold_predictor.models import (
+    CachedFeatureAdaCacheGate,
+    CachedGatedFeatureAdaCacheGate,
+    MiniDiTCLSAdaptiveThresholdPredictor,
+    normalize_feature_sets,
+)
 from wan.timestep_cache import SeaCacheTimestepCache, SeaCacheTimestepCacheConfig
 
 
@@ -17,10 +23,27 @@ from wan.timestep_cache import SeaCacheTimestepCache, SeaCacheTimestepCacheConfi
 class AdaptiveSeaCacheGateConfig:
     model_path: Path
     target_psnr: float
+    model_type: str = "auto"
     feature_set: str = "temporal_mean"
+    feature_sets: tuple[str, ...] = (
+        "latent_pool",
+        "temporal_mean",
+        "temporal_var",
+        "frame_diff_mean",
+        "frame_diff_var",
+    )
     hidden_dim: int = 16
+    feature_embedding_dim: int | None = None
     feature_dim: int = 128
     grid_size: tuple[int, int, int] = (2, 2, 2)
+    dit_input_shape: tuple[int, int, int, int] | None = None
+    dit_patch_size: tuple[int, int, int] | None = None
+    dit_dim: int = 96
+    dit_layers: int = 2
+    dit_heads: int = 4
+    dit_mlp_ratio: float = 2.0
+    dit_dropout: float = 0.05
+    dit_gate_init: float = 0.0
     psnr_min: float = 10.0
     psnr_max: float = 50.0
     min_threshold: float = 0.0
@@ -29,29 +52,67 @@ class AdaptiveSeaCacheGateConfig:
     measure_predictor_timing: bool = False
 
 
-class OnlineCachedFeatureGate(nn.Module):
-    """Predict thresholds from live Wan latents using training-time feature extraction.
+class OnlineAdaptiveThresholdGate(nn.Module):
+    """Predict thresholds from live Wan latents.
 
-    The adaptive predictor was trained with precomputed pooled features, so this
-    wrapper reproduces ``build_feature_cache.extract_feature`` online and feeds
-    the result into ``CachedFeatureAdaCacheGate``.
+    The legacy MLP path reproduces cached feature extraction online. The MiniDiT
+    path feeds the raw latent directly into the learned Conv3d patch embedder.
     """
 
     def __init__(self, config: AdaptiveSeaCacheGateConfig) -> None:
         super().__init__()
         self.config = config
+        self.model_type = config.model_type
         self.pool = nn.AdaptiveAvgPool3d(config.grid_size)
-        self.model = CachedFeatureAdaCacheGate(
-            feature_dim=config.feature_dim,
-            hidden_dim=config.hidden_dim,
-            psnr_min=config.psnr_min,
-            psnr_max=config.psnr_max,
-        )
+        if self.model_type == "mlp":
+            self.model = CachedFeatureAdaCacheGate(
+                feature_dim=config.feature_dim,
+                hidden_dim=config.hidden_dim,
+                psnr_min=config.psnr_min,
+                psnr_max=config.psnr_max,
+                min_threshold=config.min_threshold,
+                max_threshold=config.max_threshold,
+            )
+        elif self.model_type == "mlp_gated":
+            feature_sets = normalize_feature_sets(config.feature_sets)
+            self.model = CachedGatedFeatureAdaCacheGate(
+                feature_dims={name: config.feature_dim for name in feature_sets},
+                hidden_dim=config.hidden_dim,
+                feature_embedding_dim=config.feature_embedding_dim,
+                psnr_min=config.psnr_min,
+                psnr_max=config.psnr_max,
+                min_threshold=config.min_threshold,
+                max_threshold=config.max_threshold,
+            )
+        elif self.model_type == "mini_dit_cls":
+            if config.dit_input_shape is None:
+                raise ValueError("dit_input_shape is required for mini_dit_cls.")
+            if config.dit_patch_size is None:
+                raise ValueError("dit_patch_size is required for mini_dit_cls.")
+            self.model = MiniDiTCLSAdaptiveThresholdPredictor(
+                input_shape=config.dit_input_shape,
+                patch_size=config.dit_patch_size,
+                dim=config.dit_dim,
+                num_layers=config.dit_layers,
+                num_heads=config.dit_heads,
+                mlp_ratio=config.dit_mlp_ratio,
+                psnr_min=config.psnr_min,
+                psnr_max=config.psnr_max,
+                min_threshold=config.min_threshold,
+                max_threshold=config.max_threshold,
+                dropout=config.dit_dropout,
+                gate_init=config.dit_gate_init,
+            )
+        else:
+            raise ValueError(
+                f"Unsupported adaptive gate model_type {self.model_type!r}; "
+                "expected 'mlp', 'mlp_gated', or 'mini_dit_cls'."
+            )
 
     @classmethod
-    def load(cls, config: AdaptiveSeaCacheGateConfig) -> "OnlineCachedFeatureGate":
+    def load(cls, config: AdaptiveSeaCacheGateConfig) -> "OnlineAdaptiveThresholdGate":
+        config, state = _load_adaptive_gate_state(config)
         gate = cls(config)
-        state = torch.load(config.model_path, map_location="cpu")
         gate.model.load_state_dict(state)
         gate.eval().requires_grad_(False)
         gate.to(torch.device(config.device))
@@ -68,17 +129,25 @@ class OnlineCachedFeatureGate(nn.Module):
             device=next(self.parameters()).device,
             dtype=torch.float32,
         )
-        feature = self._extract_feature(latent)
         step_fraction = float(step_index) / float(max(num_steps - 1, 1))
-        pred = self.model(feature, step_fraction, self.config.target_psnr)
+        if self.model_type == "mini_dit_cls":
+            pred = self.model(latent, step_fraction, self.config.target_psnr)
+        elif self.model_type == "mlp_gated":
+            features = {
+                name: self._extract_feature(latent, name)
+                for name in self.model.feature_sets
+            }
+            pred = self.model(features, step_fraction, self.config.target_psnr)
+        else:
+            feature = self._extract_feature(latent, self.config.feature_set)
+            pred = self.model(feature, step_fraction, self.config.target_psnr)
         threshold = float(pred.flatten()[0].detach().cpu().item())
         return max(
             self.config.min_threshold,
             min(self.config.max_threshold, threshold),
         )
 
-    def _extract_feature(self, latent: torch.Tensor) -> torch.Tensor:
-        feature_set = self.config.feature_set
+    def _extract_feature(self, latent: torch.Tensor, feature_set: str) -> torch.Tensor:
         batch, channels, _, _, _ = latent.shape
         temporal_bins, height_bins, width_bins = self.pool.output_size
         if feature_set == "latent_pool":
@@ -93,10 +162,49 @@ class OnlineCachedFeatureGate(nn.Module):
                 .expand(batch, channels, temporal_bins, height_bins, width_bins)
                 .flatten(start_dim=1)
             )
+        if feature_set == "temporal_var":
+            spatial = torch.nn.functional.adaptive_avg_pool2d(
+                latent.var(dim=2, unbiased=False),
+                (height_bins, width_bins),
+            )
+            return (
+                spatial.unsqueeze(2)
+                .expand(batch, channels, temporal_bins, height_bins, width_bins)
+                .flatten(start_dim=1)
+            )
+        if feature_set == "frame_diff_mean":
+            diff = self._frame_diff(latent)
+            spatial = torch.nn.functional.adaptive_avg_pool2d(
+                diff.mean(dim=2),
+                (height_bins, width_bins),
+            )
+            return (
+                spatial.unsqueeze(2)
+                .expand(batch, channels, temporal_bins, height_bins, width_bins)
+                .flatten(start_dim=1)
+            )
+        if feature_set == "frame_diff_var":
+            diff = self._frame_diff(latent)
+            spatial = torch.nn.functional.adaptive_avg_pool2d(
+                diff.var(dim=2, unbiased=False),
+                (height_bins, width_bins),
+            )
+            return (
+                spatial.unsqueeze(2)
+                .expand(batch, channels, temporal_bins, height_bins, width_bins)
+                .flatten(start_dim=1)
+            )
         raise ValueError(
-            f"Adaptive SeaCache inference currently supports latent_pool and "
-            f"temporal_mean, got {feature_set!r}."
+            f"Adaptive SeaCache inference got unsupported feature_set {feature_set!r}."
         )
+
+    @staticmethod
+    def _frame_diff(latent: torch.Tensor) -> torch.Tensor:
+        if latent.shape[2] <= 1:
+            return torch.zeros_like(latent)
+        diff = torch.zeros_like(latent)
+        diff[:, :, 1:] = (latent[:, :, 1:] - latent[:, :, :-1]).abs()
+        return diff
 
     @staticmethod
     def _normalize_latent_rank(latent: torch.Tensor) -> torch.Tensor:
@@ -107,6 +215,179 @@ class OnlineCachedFeatureGate(nn.Module):
         raise ValueError(
             f"Expected latent shape [C,T,H,W] or [B,C,T,H,W], got {tuple(latent.shape)}"
         )
+
+
+OnlineCachedFeatureGate = OnlineAdaptiveThresholdGate
+
+
+def _load_json_config(model_path: Path) -> dict[str, object]:
+    config_path = model_path.parent / "config.json"
+    if not config_path.exists():
+        return {}
+    with config_path.open() as handle:
+        loaded = json.load(handle)
+    if not isinstance(loaded, dict):
+        raise ValueError(f"Expected object in {config_path}, got {type(loaded).__name__}")
+    return loaded
+
+
+def _load_adaptive_gate_state(
+    config: AdaptiveSeaCacheGateConfig,
+) -> tuple[AdaptiveSeaCacheGateConfig, dict[str, torch.Tensor]]:
+    state_or_checkpoint = torch.load(config.model_path, map_location="cpu")
+    metadata: dict[str, object] = _load_json_config(config.model_path)
+    feature_extractor: dict[str, object] = {}
+
+    if isinstance(state_or_checkpoint, dict) and "model_state_dict" in state_or_checkpoint:
+        state = state_or_checkpoint["model_state_dict"]
+        metadata.update(state_or_checkpoint.get("args") or {})
+        feature_extractor = state_or_checkpoint.get("feature_extractor") or {}
+        checkpoint_model_type = str(
+            state_or_checkpoint.get("model_type")
+            or metadata.get("model_type")
+            or config.model_type
+        )
+    elif isinstance(state_or_checkpoint, dict):
+        state = state_or_checkpoint
+        checkpoint_model_type = str(metadata.get("model_type") or config.model_type)
+    else:
+        raise ValueError(
+            f"Expected state_dict or checkpoint dict in {config.model_path}, "
+            f"got {type(state_or_checkpoint).__name__}."
+        )
+
+    model_type = "auto" if config.model_type == "auto" else config.model_type
+    if model_type == "auto":
+        if any(key.startswith("patch_embedding.") for key in state):
+            model_type = "mini_dit_cls"
+        elif any(key.startswith("fusion.") for key in state):
+            model_type = "mlp_gated"
+        else:
+            model_type = "mlp"
+    if model_type == "mini_dit_cls":
+        input_shape = (
+            config.dit_input_shape
+            or _tuple_from_metadata(feature_extractor, "input_shape", 4)
+            or (16, 12, 60, 104)
+        )
+        patch_size = (
+            config.dit_patch_size
+            or _tuple_from_metadata(feature_extractor, "patch_size", 3)
+            or _tuple_from_metadata(metadata, "dit_patch_size", 3)
+            or (3, 12, 8)
+        )
+        config = AdaptiveSeaCacheGateConfig(
+            model_path=config.model_path,
+            target_psnr=config.target_psnr,
+            model_type="mini_dit_cls",
+            feature_set=config.feature_set,
+            feature_sets=config.feature_sets,
+            hidden_dim=config.hidden_dim,
+            feature_embedding_dim=config.feature_embedding_dim,
+            feature_dim=config.feature_dim,
+            grid_size=config.grid_size,
+            dit_input_shape=input_shape,
+            dit_patch_size=patch_size,
+            dit_dim=int(metadata.get("dit_dim", config.dit_dim)),
+            dit_layers=int(metadata.get("dit_layers", config.dit_layers)),
+            dit_heads=int(metadata.get("dit_heads", config.dit_heads)),
+            dit_mlp_ratio=float(metadata.get("dit_mlp_ratio", config.dit_mlp_ratio)),
+            dit_dropout=float(metadata.get("dit_dropout", config.dit_dropout)),
+            dit_gate_init=float(metadata.get("dit_gate_init", config.dit_gate_init)),
+            psnr_min=float(metadata.get("psnr_min", config.psnr_min)),
+            psnr_max=float(metadata.get("psnr_max", config.psnr_max)),
+            min_threshold=float(metadata.get("min_threshold", config.min_threshold)),
+            max_threshold=float(metadata.get("max_threshold", config.max_threshold)),
+            device=config.device,
+            measure_predictor_timing=config.measure_predictor_timing,
+        )
+    elif model_type == "mlp_gated":
+        feature_sets_value = (
+            feature_extractor.get("feature_sets")
+            or metadata.get("feature_sets")
+            or metadata.get("selected_feature_sets")
+            or config.feature_sets
+        )
+        feature_sets = normalize_feature_sets(feature_sets_value)  # type: ignore[arg-type]
+        config = AdaptiveSeaCacheGateConfig(
+            model_path=config.model_path,
+            target_psnr=config.target_psnr,
+            model_type="mlp_gated",
+            feature_set=config.feature_set,
+            feature_sets=feature_sets,
+            hidden_dim=int(metadata.get("hidden_dim", config.hidden_dim)),
+            feature_embedding_dim=(
+                int(
+                    feature_extractor.get(
+                        "feature_embedding_dim",
+                        metadata.get(
+                            "feature_embedding_dim",
+                            metadata.get(
+                                "resolved_feature_embedding_dim",
+                                config.feature_embedding_dim or int(metadata.get("hidden_dim", config.hidden_dim)),
+                            ),
+                        ),
+                    )
+                )
+            ),
+            feature_dim=int(metadata.get("feature_dim", config.feature_dim)),
+            grid_size=config.grid_size,
+            dit_input_shape=config.dit_input_shape,
+            dit_patch_size=config.dit_patch_size,
+            dit_dim=config.dit_dim,
+            dit_layers=config.dit_layers,
+            dit_heads=config.dit_heads,
+            dit_mlp_ratio=config.dit_mlp_ratio,
+            dit_dropout=float(metadata.get("dit_dropout", config.dit_dropout)),
+            dit_gate_init=config.dit_gate_init,
+            psnr_min=float(metadata.get("psnr_min", config.psnr_min)),
+            psnr_max=float(metadata.get("psnr_max", config.psnr_max)),
+            min_threshold=float(metadata.get("min_threshold", config.min_threshold)),
+            max_threshold=float(metadata.get("max_threshold", config.max_threshold)),
+            device=config.device,
+            measure_predictor_timing=config.measure_predictor_timing,
+        )
+    else:
+        config = AdaptiveSeaCacheGateConfig(
+            model_path=config.model_path,
+            target_psnr=config.target_psnr,
+            model_type="mlp",
+            feature_set=str(metadata.get("feature_set", config.feature_set)),
+            feature_sets=config.feature_sets,
+            hidden_dim=int(metadata.get("hidden_dim", config.hidden_dim)),
+            feature_embedding_dim=config.feature_embedding_dim,
+            feature_dim=int(metadata.get("feature_dim", config.feature_dim)),
+            grid_size=config.grid_size,
+            dit_input_shape=config.dit_input_shape,
+            dit_patch_size=config.dit_patch_size,
+            dit_dim=config.dit_dim,
+            dit_layers=config.dit_layers,
+            dit_heads=config.dit_heads,
+            dit_mlp_ratio=config.dit_mlp_ratio,
+            dit_dropout=float(metadata.get("dit_dropout", config.dit_dropout)),
+            dit_gate_init=config.dit_gate_init,
+            psnr_min=float(metadata.get("psnr_min", config.psnr_min)),
+            psnr_max=float(metadata.get("psnr_max", config.psnr_max)),
+            min_threshold=float(metadata.get("min_threshold", config.min_threshold)),
+            max_threshold=float(metadata.get("max_threshold", config.max_threshold)),
+            device=config.device,
+            measure_predictor_timing=config.measure_predictor_timing,
+        )
+    return config, state
+
+
+def _tuple_from_metadata(
+    metadata: dict[str, object],
+    key: str,
+    length: int,
+) -> tuple[int, ...] | None:
+    value = metadata.get(key)
+    if value is None:
+        return None
+    values = tuple(int(item) for item in value)  # type: ignore[arg-type]
+    if len(values) != length:
+        raise ValueError(f"Expected {key} length {length}, got {values!r}")
+    return values
 
 
 @dataclass
@@ -128,7 +409,7 @@ class AdaptiveSeaCacheTimestepCache(SeaCacheTimestepCache):
     def __init__(
         self,
         config: SeaCacheTimestepCacheConfig,
-        gate: OnlineCachedFeatureGate,
+        gate: OnlineAdaptiveThresholdGate,
     ) -> None:
         super().__init__(config)
         self.gate = gate
@@ -322,14 +603,15 @@ class ReplaySeaCacheTimestepCache(SeaCacheTimestepCache):
 def build_adaptive_seacache_factory(
     gate_config: AdaptiveSeaCacheGateConfig,
 ):
-    gate = OnlineCachedFeatureGate.load(gate_config)
+    gate = OnlineAdaptiveThresholdGate.load(gate_config)
     logging.info(
-        "Loaded adaptive SeaCache gate: model=%s target_psnr=%.3f feature_set=%s "
-        "hidden_dim=%d",
-        gate_config.model_path,
-        gate_config.target_psnr,
-        gate_config.feature_set,
-        gate_config.hidden_dim,
+        "Loaded adaptive SeaCache gate: model=%s model_type=%s target_psnr=%.3f "
+        "feature_set=%s hidden_dim=%d",
+        gate.config.model_path,
+        gate.model_type,
+        gate.config.target_psnr,
+        gate.config.feature_set,
+        gate.config.hidden_dim,
     )
 
     class AdaptiveSeaCacheFactory:

@@ -1,0 +1,46 @@
+# 2026-06-29 Row Split Packed MiniDiT Training
+
+- User requested a row-split diagnostic training run using the full packed raw latent cache.
+- Added packed raw latent dataset support:
+  - `adaptive_threshold_predictor/data.py`
+    - `PackedRawLatentThresholdDataset`
+    - `split_indices_by_row`
+  - `adaptive_threshold_predictor/train_gate.py`
+    - `--packed_latent_cache_dir`
+    - `--preload_packed_latents`
+    - `--split_mode {sample,row}`
+- Smoke validation:
+  - `python -m py_compile adaptive_threshold_predictor/data.py adaptive_threshold_predictor/train_gate.py`
+  - CPU smoke with `--max_examples 64`, packed cache, and `--split_mode row` completed.
+- Launched formal row-split training:
+  - tmux session: `wan22_mini_dit_rowsplit_packed_20260629_232659`
+  - output root: `/hy-tmp/wan22_adaptive_threshold_mini_dit_cls_convpatch_rowsplit_packed_d96_l2_bs128_20260629_232659`
+  - symlink: `experiment_results/wan22_adaptive_threshold_mini_dit_cls_convpatch_rowsplit_packed_d96_l2_bs128_20260629_232659`
+  - launch script: `/hy-tmp/wan22_adaptive_threshold_mini_dit_cls_convpatch_rowsplit_packed_d96_l2_bs128_20260629_232659/commands/launch_train.sh`
+  - log: `/hy-tmp/wan22_adaptive_threshold_mini_dit_cls_convpatch_rowsplit_packed_d96_l2_bs128_20260629_232659/logs/train.log`
+- Formal training config matches the sample-split Conv3d MiniDiT run except:
+  - `--packed_latent_cache_dir /hy-tmp/wan22_adaptive_threshold_raw_latent_packed_cache_candidate_inverse_fp16_20260629_221805`
+  - `--preload_packed_latents`
+  - `--split_mode row`
+  - `--num_workers 0`
+- Runtime notes:
+  - preloading the 98 fp16 packed shards uses about `120G` RSS in the training process.
+  - first epoch completed with `val_mae=0.10507791430577636`, already below the earlier sample-split best `0.1144591414630413`.
+  - high-threshold rows remain difficult after epoch 1: `threshold_0.80` val MAE was about `0.236`.
+- Completion check at 2026-06-30 00:49 CST:
+  - tmux session exited and GPU memory returned to idle.
+  - completed all `30` epochs; no early stop triggered because validation kept improving until the end.
+  - best epoch: `29`
+  - best val MAE: `0.03800193872973323`
+  - best val loss: `0.0303390173971653`
+  - best epoch train MAE: `0.04076685686819256`
+  - best epoch val bias: `-0.0029424602054059505`
+  - best epoch `threshold_0.70` val MAE: `0.03862547485851774`
+  - best epoch `threshold_0.80` val MAE: `0.07903741441145846`
+  - final epoch val MAE: `0.03809734165892005`
+  - model parameters: `724513`
+  - artifacts written: `best_model.pt`, `best_model_checkpoint.pt`, `final_model.pt`, `final_model_checkpoint.pt`, `metrics.json`, `epoch_metrics.csv`, `epoch_metrics.jsonl`, `val_predictions.csv`, and `val_predictions_epoch_001.csv` through `val_predictions_epoch_030.csv`.
+- Interpretation:
+  - Row split is much easier than sample split: best val MAE improved from the sample-split best `0.1144591414630413` to `0.03800193872973323`.
+  - This strongly suggests the MiniDiT Conv3d predictor and training path can learn same-video / same-distribution interpolation.
+  - The poor sample-split result is therefore more likely caused by cross-sample generalization and/or the current `candidate_inverse` task definition than by a completely incapable architecture.

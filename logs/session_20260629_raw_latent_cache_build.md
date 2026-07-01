@@ -1,0 +1,39 @@
+# 2026-06-29 Raw Latent Packed Cache Build
+
+- User requested building a full raw latent packed cache under `/hy-tmp` after disk expansion, without stopping the active MiniDiT training.
+- Checked resources:
+  - `/hy-tmp`: `800G` total, about `268G` free.
+  - source trace data root `/hy-tmp/openvid_100_seacache_trace_data`: about `135G`.
+  - active training tmux still running: `wan22_mini_dit_convpatch_train_20260629_214906`.
+- Added script:
+  - `adaptive_threshold_predictor/build_raw_latent_cache.py`
+- Smoke tested with 20 examples:
+  - output root `/hy-tmp/wan22_raw_latent_packed_cache_smoke_20260629`
+  - produced 3 shards with latent shape `[16, 12, 60, 104]`.
+- Launched full cache build in tmux:
+  - session: `wan22_raw_latent_cache_build_20260629_221805`
+  - result root: `/hy-tmp/wan22_adaptive_threshold_raw_latent_packed_cache_candidate_inverse_fp16_20260629_221805`
+  - launch script: `/hy-tmp/wan22_adaptive_threshold_raw_latent_packed_cache_candidate_inverse_fp16_20260629_221805/commands/build_cache.sh`
+  - log: `/hy-tmp/wan22_adaptive_threshold_raw_latent_packed_cache_candidate_inverse_fp16_20260629_221805/logs/build.log`
+- Full build parameters:
+  - `dataset_mode=candidate_inverse`
+  - `dtype=float16`
+  - `shard_size=512`
+  - `batch_size=16`
+  - `num_workers=2`
+  - low IO/CPU priority via `ionice -c2 -n7 nice -n 10`.
+- Early progress check:
+  - `8192/50000` examples processed in `127.98s`
+  - throughput about `64 examples/s`
+  - `16` shards written
+  - cache root size about `19G`
+  - projected completion roughly `13-15 minutes` if speed remains similar.
+- Active MiniDiT training was not stopped; it had reached epoch `9` at the same check.
+- Completion check at 2026-06-29 22:31 CST:
+  - tmux session `wan22_raw_latent_cache_build_20260629_221805` exited normally.
+  - processed `50000/50000` examples.
+  - manifest reports `num_examples=50000`, `num_shards=98`, `dtype=float16`, `latent_shape=[16, 12, 60, 104]`, `shard_size=512`, `elapsed_seconds=650.864`.
+  - cache root size is about `112G`.
+  - `/hy-tmp` had about `160G` free after completion.
+  - shard count on disk is `98`; first shard shape is `[512, 16, 12, 60, 104]`, final shard shape is `[336, 16, 12, 60, 104]`.
+  - `metadata.pt` contains 50k entries for `sample_id`, `timestep`, `target_psnr`, `threshold`, `step_index`, `source_index`, `shard_name`, and `shard_offset`.

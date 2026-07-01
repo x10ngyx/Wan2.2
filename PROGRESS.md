@@ -211,6 +211,523 @@ The main report covers fixed ZEUS, ZEUS-threshold reuse_interp, and the three-ca
 2. Use the consolidated table to define the first adaptive-threshold predictor baseline.
 3. Keep future progress entries concise and append-only from this reset point.
 
+Note added 2026-06-29: this "Next Recommended Work" block is stale for adaptive-threshold work. A first adaptive threshold predictor and adaptive SeaCache inference prototype already exist in `adaptive_threshold_predictor/` and `adaptive_seacache_wan22/`, with reports under `reports/report_adaptive_predictor.md`, `reports/report_adaptive_predictor_training_curves.md`, and `reports/report_adaptive_seacache_train15_test5_and_overhead.md`. Current adaptive-related follow-up should be based on the newer `todo.md` item: the existing predictor performs poorly and needs VBench10 retesting plus diagnosis, not a from-scratch first predictor.
+
+## 2026-06-29 Transformer Predictor Design
+
+- Discussed replacing the current pooled-feature MLP adaptive threshold predictor with a lightweight DiT-style Transformer predictor.
+- Decided to use a CLS readout design and not exactly reproduce Wan2.2 3D RoPE in the first version.
+- Wrote architecture/hyperparameter proposal: `reports/report_transformer_predictor_architecture.md`.
+
+## 2026-06-30 Adaptive Predictor Architecture/Result Review
+
+- Reviewed newly added `adaptive_threshold_predictor` MiniDiT-CLS Transformer and 5-feature gated MLP against `reports/report_transformer_predictor_architecture.md` and `reports/report_gated_multifeature_mlp_architecture.md`.
+- Architecture match is mostly correct: MiniDiT uses raw latent `[16,12,60,104]` with learned `Conv3d` patch `(3,12,8)`, 260 tokens, CLS readout, factorized learned 3D position embeddings, 2 AdaLN-modulated Transformer blocks, and output range `[0.10,0.80]`; gated MLP uses five 128-d pooled features, separate encoders, condition-dependent softmax gates, fused feature+condition head, and 83,526 params.
+- Important caveat found: MiniDiT zero-initialized AdaLN gates mean the first backward pass gives zero gradient to patch embedding / attention / block MLP / condition embedding; only CLS/head and modulation learn initially. Checkpoints show those modules do later change, so it is not a fatal bug, but `--dit_gate_init` should be ablated against a small nonzero value.
+- Training settings are broadly reasonable, but row-split metrics are optimistic because train/val contain all 100 sample IDs. Use sample split as the generalization signal for model selection and online VBench10 evaluation.
+- Result anomalies: first MiniDiT run `wan22_adaptive_threshold_mini_dit_cls_convpatch_3x12x8_d96_l2_20260629_214241` has no `metrics.json`/checkpoint and appears incomplete; do not include it in comparisons. MiniDiT sample split early-stopped with best val MAE about `0.1145`; MiniDiT row split reached about `0.0380`; gated MLP sample split best val MAE about `0.1143`, row split 30 about `0.0757`, row split 100 about `0.0601`.
+
+## 2026-06-30 Adaptive Predictor Architecture Diagrams
+
+- Created SVG architecture diagrams for the two current adaptive threshold predictor designs:
+  - `reports/assets/gated_multifeature_mlp_architecture.svg`
+  - `reports/assets/mini_dit_cls_predictor_architecture.svg`
+- Added a small reproducible generator script: `reports/make_adaptive_architecture_diagrams.py`.
+- Inserted the SVG references near the top of `reports/report_gated_multifeature_mlp_architecture.md` and `reports/report_transformer_predictor_architecture.md`.
+- Revised the diagrams after review: removed non-architecture note/metadata boxes, and redrew the 5-feature MLP to explicitly show `condition -> gate head + softmax -> g1..g5 -> gated feature fusion`.
+- Revised the 5-feature diagram again after the gated MLP output head was range-mapped: output now shows `[0.10,0.80]`, the encoded-feature aggregation box covers all five branches, and right-side boxes were widened/shortened to avoid text overflow.
+
+## 2026-06-30 Adaptive SeaCache MiniDiT Online Smoke
+
+- Integrated the trained `mini_dit_cls` Transformer predictor into `adaptive_seacache_wan22` while keeping the legacy cached-feature MLP path compatible.
+- `adaptive_seacache_wan22/cache.py` now auto-detects checkpoint type, supports `best_model_checkpoint.pt` payloads, and instantiates `MiniDiTCLSAdaptiveThresholdPredictor` from checkpoint/config metadata.
+- `adaptive_seacache_wan22/generate_t2v.py` now exposes `--adaptive_model_type auto|mlp|mini_dit_cls` plus optional MiniDiT shape/hyperparameter overrides, and clears stale logging handlers so Wan summary logs are emitted.
+- Ran a full T2V smoke on GPU with VBench10 prompt `vbench10_001` / prompt text `A woman is playing football.`, seed `42`, `832*480`, `45` frames, `50` steps, `dpm++`, target PSNR `25`, checkpoint `/hy-tmp/wan22_adaptive_threshold_mini_dit_cls_convpatch_rowsplit_packed_d96_l2_bs128_20260629_232659/best_model_checkpoint.pt`.
+- Result root: `/hy-tmp/wan22_adaptive_seacache_mini_dit_vbench01_smoke_20260630_021304`.
+- Output validated by ffprobe: `832x480`, `45` frames, `16 fps`, duration `2.8125s`.
+- Metrics against matching dpm++ no-cache baseline `/hy-tmp/wan22_zeus_vbench10_50step_45f_480p_20260624_003030/baseline/vbench10_001.mp4`: compute elapsed `374.941s`, baseline compute `538.211s`, speedup `1.435x`, FFmpeg PSNR average `19.493 dB`.
+- Cache summary: total reuse branch calls `42`, total recompute branch calls `58`; predicted thresholds ranged `0.1885-0.2852` with mean approximately `0.2068`.
+- Result tables written to `/hy-tmp/wan22_adaptive_seacache_mini_dit_vbench01_smoke_20260630_021304/results/summary.csv` and `cache_key_summary.csv`.
+- Note: this target-25 MiniDiT smoke undershot the requested quality target substantially on this prompt. Next useful step is a small target sweep or replay comparison against fixed SeaCache thresholds on the same prompt before scaling to VBench10.
+
+## 2026-06-30 MiniDiT Split Compare 24-Candidate Pilot
+
+- User requested a small online comparison of MiniDiT predictors trained with normal sample split vs row split:
+  - datasets: VBench10 and OpenVid100 train distribution
+  - target PSNRs: `22`, `28`
+  - prompts per dataset: `3`
+  - total candidates: `2 models * 2 targets * 2 datasets * 3 prompts = 24`
+- Added runner:
+  - `experiments/adaptive_seacache_mini_dit_split_compare_50step_45f_480p/run_batch.py`
+  - `experiments/adaptive_seacache_mini_dit_split_compare_50step_45f_480p/run_tmux.sh`
+- Runner reuses existing baselines only; it does not generate baselines.
+  - VBench10 dpm++ baselines are reused from `/hy-tmp/wan22_zeus_vbench10_50step_45f_480p_20260624_003030`.
+  - OpenVid100 train baselines are reused from `/hy-tmp/openvid_100_seacache_trace_data/...`; selected prompts are sample-split train IDs with existing baseline artifacts.
+- Selected records:
+  - VBench10: `vbench10_001`, `vbench10_002`, `vbench10_003`
+  - OpenVid train: `openvid_002/openvidhd_part1_001`, `openvid_004/openvidhd_part1_003`, `openvid_005/openvidhd_part1_004`
+- Compared checkpoints:
+  - sample split: `/hy-tmp/wan22_adaptive_threshold_mini_dit_cls_convpatch_3x12x8_d96_l2_bs128_20260629_214906/best_model_checkpoint.pt`
+  - row split: `/hy-tmp/wan22_adaptive_threshold_mini_dit_cls_convpatch_rowsplit_packed_d96_l2_bs128_20260629_232659/best_model_checkpoint.pt`
+- Runner memory hygiene:
+  - loads WanT2V pipeline once
+  - creates a fresh adaptive SeaCache factory per candidate
+  - writes summary/trace immediately
+  - calls `clear_last_instance()`, restores `wan.text2video.SeaCacheTimestepCache`, deletes the factory, and calls `torch.cuda.empty_cache()` after each candidate
+- CPU validation passed and found exactly 24 expected candidates.
+- Launched tmux run:
+  - tmux session: `wan22_adaptive_mini_dit_split_20260630_025328`
+  - result root: `/hy-tmp/wan22_adaptive_seacache_mini_dit_split_compare_50step_45f_480p_20260630_025328`
+  - runner log: `/hy-tmp/wan22_adaptive_seacache_mini_dit_split_compare_50step_45f_480p_20260630_025328/logs/runner.log`
+- First candidate completed successfully:
+  - `vbench10_001`, sample-split MiniDiT, target `22`
+  - compute elapsed `283.984s`
+  - baseline compute `538.211s`
+  - speedup `1.895x`
+  - FFmpeg PSNR `14.928 dB`
+  - trace rows `100`, reuse decisions `50`, recompute decisions `50`
+  - threshold mean `0.2725`
+- The run was still active at the time of this progress update; monitor with `tmux attach -t wan22_adaptive_mini_dit_split_20260630_025328`.
+
+## 2026-06-29 Raw Latent Packed Cache
+
+- Built a full packed raw-latent cache for adaptive-threshold training without stopping the MiniDiT training run.
+- Cache root: `/hy-tmp/wan22_adaptive_threshold_raw_latent_packed_cache_candidate_inverse_fp16_20260629_221805`
+- Source trace root: `/hy-tmp/openvid_100_seacache_trace_data`
+- Builder script: `adaptive_threshold_predictor/build_raw_latent_cache.py`
+- Launch/log:
+  - `/hy-tmp/wan22_adaptive_threshold_raw_latent_packed_cache_candidate_inverse_fp16_20260629_221805/commands/build_cache.sh`
+  - `/hy-tmp/wan22_adaptive_threshold_raw_latent_packed_cache_candidate_inverse_fp16_20260629_221805/logs/build.log`
+- Build config:
+  - dataset mode `candidate_inverse`
+  - dtype `float16`
+  - latent shape `[16, 12, 60, 104]`
+  - shard size `512`
+  - batch size `16`
+  - workers `2`
+  - low IO/CPU priority via `ionice -c2 -n7 nice -n 10`
+- Completion:
+  - processed `50000/50000` examples
+  - elapsed `650.864s`
+  - throughput about `77 examples/s` by the end
+  - `98` shard files
+  - cache root size about `112G`
+  - `/hy-tmp` had about `160G` free after completion
+- Integrity checks:
+  - `manifest.json` reports `num_examples=50000`, `num_shards=98`, `dtype=float16`, `latent_shape=[16, 12, 60, 104]`.
+
+  - `metadata.pt` has 50k entries for `sample_id`, `timestep`, `target_psnr`, `threshold`, `step_index`, `source_index`, `shard_name`, and `shard_offset`.
+  - First shard tensor shape is `[512, 16, 12, 60, 104]`; final shard tensor shape is `[336, 16, 12, 60, 104]`.
+
+## 2026-06-29 Row Split Packed MiniDiT Training
+
+- Added packed raw latent dataset support and row-level split support for diagnostic MiniDiT training:
+  - `adaptive_threshold_predictor/data.py`
+  - `adaptive_threshold_predictor/train_gate.py`
+- New training arguments:
+  - `--packed_latent_cache_dir`
+  - `--preload_packed_latents`
+  - `--split_mode {sample,row}`
+- Validation:
+  - `python -m py_compile adaptive_threshold_predictor/data.py adaptive_threshold_predictor/train_gate.py` passed.
+  - CPU smoke with packed cache, row split, and `--max_examples 64` completed.
+- Formal run launched:
+  - tmux session: `wan22_mini_dit_rowsplit_packed_20260629_232659`
+  - output root: `/hy-tmp/wan22_adaptive_threshold_mini_dit_cls_convpatch_rowsplit_packed_d96_l2_bs128_20260629_232659`
+  - symlink: `experiment_results/wan22_adaptive_threshold_mini_dit_cls_convpatch_rowsplit_packed_d96_l2_bs128_20260629_232659`
+  - launch script: `/hy-tmp/wan22_adaptive_threshold_mini_dit_cls_convpatch_rowsplit_packed_d96_l2_bs128_20260629_232659/commands/launch_train.sh`
+  - log: `/hy-tmp/wan22_adaptive_threshold_mini_dit_cls_convpatch_rowsplit_packed_d96_l2_bs128_20260629_232659/logs/train.log`
+- First epoch completed:
+  - `val_mae=0.10507791430577636`
+  - earlier sample-split Conv3d MiniDiT best was `0.1144591414630413`
+  - high-threshold rows remain difficult; epoch-1 `threshold_0.80` val MAE was about `0.236`.
+- Completed at 2026-06-30 00:49 CST:
+  - all `30` epochs completed; no early stop triggered.
+  - best epoch: `29`
+  - best val MAE: `0.03800193872973323`
+  - final epoch val MAE: `0.03809734165892005`
+  - best epoch train MAE: `0.04076685686819256`
+  - best epoch `threshold_0.70` val MAE: `0.03862547485851774`
+  - best epoch `threshold_0.80` val MAE: `0.07903741441145846`
+  - model parameters: `724513`
+  - tmux exited normally; GPU memory returned to idle.
+- Interpretation:
+  - Row split is much easier than sample split; validation MAE improved from `0.1144591414630413` to `0.03800193872973323`.
+  - This indicates the Conv3d MiniDiT predictor can learn same-video / row-level interpolation from the packed raw latents.
+  - The earlier sample-split failure is more consistent with cross-sample generalization difficulty and/or `candidate_inverse` task mismatch than with the architecture being unable to fit the signal.
+- Recommended first configuration:
+  - `MiniDiTCLSAdaptiveThresholdPredictor`
+  - latent patch size `(3, 12, 8)`, token grid `[4, 5, 13]`, `260` latent tokens plus CLS
+  - `d_model=96`, `2` layers, `4` heads, `mlp_ratio=2.0`, dropout `0.05`
+  - factorized learned 3D positional embeddings
+  - DiT-style AdaLN conditioning from step fraction and target PSNR
+  - output constrained to threshold range `[0.10, 0.80]`
+- Rationale: current training set has about 40k step-level examples but much lower effective diversity, so the first Transformer should remain under roughly 1M parameters.
+
+## 2026-06-29 Multi-Feature MLP Extension
+
+- Read `adaptive_threshold_predictor/` to locate the legacy MLP data/model path:
+  - raw trace dataset: `TraceStepThresholdDataset`
+  - cached pooled feature dataset: `CachedFeatureThresholdDataset`
+  - legacy MLP model: `ImprovedAdaCacheGate` / `CachedFeatureAdaCacheGate`
+  - training entry: `adaptive_threshold_predictor/train_gate.py`
+- Added backward-compatible multi-feature MLP support:
+  - existing `--feature_set <name>` single-feature behavior remains valid.
+  - new `--feature_sets <name> [<name> ...]` concatenates multiple latent-derived features.
+  - cached path loads multiple `features_<feature>.pt` files from `--cache_dir`, validates row counts, and concatenates along feature dimension.
+  - raw-latent path extracts each selected feature internally, concatenates pooled vectors, and projects them back to `hidden_dim` before the unchanged prediction head.
+  - config/metrics/checkpoint feature-extractor metadata now records `feature_sets`.
+- Updated README with multi-feature MLP usage.
+- Validation:
+  - `python -m py_compile adaptive_threshold_predictor/data.py adaptive_threshold_predictor/models.py adaptive_threshold_predictor/train_gate.py` passed.
+  - single-feature cached CPU smoke passed with `--feature_set latent_pool`, `max_examples=256`, `epochs=1`.
+  - multi-feature cached CPU smoke passed with `--feature_sets latent_pool temporal_var frame_diff_mean`, `max_examples=256`, `epochs=1`.
+  - raw-latent random tensor forward passed for `feature_sets=("latent_pool", "temporal_var", "frame_diff_mean")`, output shape `[2, 1]`.
+- No full GPU training run was launched in this session.
+
+## 2026-06-29 Gated Multi-Feature MLP
+
+- User noted that direct feature concatenation is a weak fusion design and requested Scheme B: Per-Feature MLP + Gated Fusion.
+- Implemented a gated fusion MLP path while preserving the direct-concat multi-feature baseline:
+  - CLI flag: `--feature_fusion concat|gated`
+  - `concat` keeps the previous direct concatenation behavior.
+  - `gated` uses four default features unless `--feature_sets` is explicitly provided:
+    - `latent_pool`
+    - `temporal_var`
+    - `frame_diff_mean`
+    - `frame_diff_var`
+- Model additions in `adaptive_threshold_predictor/models.py`:
+  - `DEFAULT_GATED_FEATURE_SETS`
+  - `GatedFeatureFusionAdaCacheGate`
+  - `CachedGatedFeatureAdaCacheGate`
+  - `GatedMultiFeatureAdaCacheGate`
+- Gated design:
+  - each selected feature has its own MLP encoder.
+  - timestep/target-PSNR condition embedding predicts a softmax gate over feature embeddings.
+  - fused feature is the gate-weighted sum of per-feature embeddings.
+  - prediction head consumes fused feature plus condition embedding.
+- Data/training integration:
+  - `CachedFeatureThresholdDataset` now keeps both the direct concatenated tensor (`batch["feature"]`) and per-feature tensors (`batch["features"][name]`).
+  - `train_gate.py` routes cached gated runs through the per-feature dict.
+  - raw-latent gated runs extract the same features inside the model.
+  - `config.json` includes `selected_feature_sets` and `resolved_feature_embedding_dim`.
+  - `val_predictions.csv` includes `gate_<feature>` columns for gated models.
+- README updated with the recommended gated 4-feature MLP command.
+- Validation:
+  - `python -m py_compile adaptive_threshold_predictor/data.py adaptive_threshold_predictor/models.py adaptive_threshold_predictor/train_gate.py` passed.
+  - raw-latent random forward passed with output shape `[2, 1]`, gate shape `[2, 4]`, and gate rows summing to `1`.
+  - cached gated CPU smoke passed with 4 default features, `max_examples=256`, `epochs=1`.
+  - cached gated CPU smoke with non-empty validation passed with `max_examples=1200`, `--save_val_predictions`; output CSV contains gate columns.
+  - `git diff --check` passed.
+- No full GPU training run was launched in this session.
+
+## 2026-06-29 Gated Multi-Feature MLP No-Concat Revision
+
+- User requested three follow-ups:
+  - do not retain the multi-feature concat method.
+  - calculate the current parameter count.
+  - write an architecture report modeled after `reports/report_transformer_predictor_architecture.md`.
+- Removed the multi-feature direct-concat path from the training interface:
+  - removed `--feature_fusion concat|gated`.
+  - multi-feature runs are now selected by passing `--feature_sets ...` with more than one feature, and they always use gated fusion.
+  - single-feature legacy MLP remains available through `--feature_set <name>` for old ablations.
+  - `ImprovedAdaCacheGate` was restored to single-feature behavior only.
+  - `CachedFeatureThresholdDataset` no longer constructs a concatenated tensor for multi-feature datasets; it returns per-feature tensors for gated fusion.
+- Recommended 4-feature gated run remains:
+  - `--feature_sets latent_pool temporal_var frame_diff_mean frame_diff_var`
+- Current recommended gated MLP parameter count:
+  - hidden dim `64`
+  - feature embedding dim `64`
+  - per-feature input dim `128`
+  - four features
+  - total trainable parameters: `71,045`
+  - breakdown: feature encoders `49,664`, condition encoder `4,352`, gate head `4,420`, prediction head `12,609`.
+- Added architecture report:
+  - `reports/report_gated_multifeature_mlp_architecture.md`
+- Updated README to remove the concat multi-feature command and document gated fusion as the only multi-feature MLP path.
+- Validation:
+  - `python -m py_compile adaptive_threshold_predictor/data.py adaptive_threshold_predictor/models.py adaptive_threshold_predictor/train_gate.py` passed.
+  - cached gated CPU smoke passed with `--feature_sets latent_pool temporal_var frame_diff_mean frame_diff_var`, `max_examples=64`, `epochs=1`.
+  - cached gated CPU smoke with non-empty validation passed with `max_examples=1200`, `--save_val_predictions`; `val_predictions.csv` contains the four gate columns.
+- No full GPU training run was launched in this revision.
+
+## 2026-06-30 Gated MLP Sample-Split Training
+
+- User requested a normal train/test run using sample-level train/validation split.
+- Launched and completed gated 4-feature MLP training on GPU before GPU was turned off.
+- Result root:
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_4feature_samplesplit_20260630_013006`
+- Workspace symlink:
+  - `experiment_results/wan22_adaptive_threshold_mlp_gated_4feature_samplesplit_20260630_013006`
+- Launch script:
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_4feature_samplesplit_20260630_013006/commands/launch_train.sh`
+- Log:
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_4feature_samplesplit_20260630_013006/logs/train.log`
+- Training configuration:
+  - `--model_type mlp`
+  - `--cache_dir /hy-tmp/wan22_adaptive_threshold_feature_cache_candidate_inverse_20260616_012409`
+  - `--feature_sets latent_pool temporal_var frame_diff_mean frame_diff_var`
+  - `--dataset_mode candidate_inverse`
+  - `--split_mode sample`
+  - `--epochs 30`
+  - `--batch_size 256`
+  - `--hidden_dim 64`
+  - `--feature_embedding_dim 64`
+  - `--lr 3e-4`
+  - `--min_lr 1e-5`
+  - `--warmup_steps 500`
+  - `--weight_decay 1e-4`
+  - `--smooth_l1_beta 0.02`
+  - `--grad_clip 1.0`
+  - `--early_stop_patience 5`
+  - `--dit_dropout 0.05`
+  - `--save_val_predictions`
+- Split:
+  - train examples: `40000`
+  - validation examples: `10000`
+  - train samples: `80`
+  - validation samples: `20`
+- Model parameters:
+  - `71045`
+- Completion:
+  - ran `13` epochs
+  - early stopped at epoch `13`
+  - best epoch: `8`
+  - best validation MAE: `0.11151796581298112`
+  - best validation loss: `0.10222012972831726`
+  - best epoch train MAE: `0.08612967762444168`
+  - final epoch validation MAE: `0.11888088526204228`
+- Best epoch validation summary:
+  - bias: `-0.045118419414758686`
+  - prediction min/max/mean/std: `0.07821400463581085` / `0.7639604210853577` / `0.3548815858006477` / `0.18562251329421997`
+  - MAE by step:
+    - `step_00_09`: `0.11781573643535376`
+    - `step_10_39`: `0.10946383323520421`
+    - `step_40_49`: `0.11138259292393923`
+  - MAE by threshold:
+    - `0.10`: `0.015568429000675678`
+    - `0.15`: `0.03470603171736002`
+    - `0.20`: `0.05534320007264614`
+    - `0.25`: `0.09033234791457653`
+    - `0.30`: `0.1060278910547495`
+    - `0.40`: `0.11715792307257653`
+    - `0.50`: `0.12313540376722813`
+    - `0.60`: `0.12578511033952236`
+    - `0.70`: `0.18056872788071632`
+    - `0.80`: `0.2665545933097601`
+- Final checkpoint validation prediction gate means:
+  - `gate_latent_pool`: `0.6956643772833049`
+  - `gate_temporal_var`: `0.09785542918057182`
+  - `gate_frame_diff_mean`: `0.1012345067290822`
+  - `gate_frame_diff_var`: `0.10524568697217619`
+- Interpretation:
+  - Sample-split gated MLP best val MAE `0.1115` is close to the previous sample-split MiniDiT best `0.1144591414630413`, while using far fewer parameters (`71k` vs `724k`).
+  - Like MiniDiT sample split, high thresholds remain hardest; best epoch `threshold_0.80` val MAE is `0.2666`.
+  - Gate weights on the final checkpoint are dominated by `latent_pool`, especially at higher thresholds; motion features receive more weight at low threshold `0.10` than at high thresholds.
+  - This suggests the gated model is mostly using raw pooled latent features under the current `candidate_inverse` setup, with limited but nonzero contribution from motion-derived features.
+
+## 2026-06-30 Gated MLP Row-Split Training
+
+- User requested row-split training for the gated 4-feature MLP.
+- Initial CPU attempt was started because GPU had been turned off, but it was too slow and produced no epoch output after several minutes.
+- After GPU was restored, the CPU attempt residual was removed:
+  - deleted `/hy-tmp/wan22_adaptive_threshold_mlp_gated_4feature_rowsplit_cpu_20260630_014051`
+  - deleted `experiment_results/wan22_adaptive_threshold_mlp_gated_4feature_rowsplit_cpu_20260630_014051`
+- Launched and completed GPU row-split training.
+- Result root:
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_4feature_rowsplit_gpu_20260630_014852`
+- Workspace symlink:
+  - `experiment_results/wan22_adaptive_threshold_mlp_gated_4feature_rowsplit_gpu_20260630_014852`
+- Launch script:
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_4feature_rowsplit_gpu_20260630_014852/commands/launch_train.sh`
+- Log:
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_4feature_rowsplit_gpu_20260630_014852/logs/train.log`
+- Training configuration:
+  - `--model_type mlp`
+  - `--cache_dir /hy-tmp/wan22_adaptive_threshold_feature_cache_candidate_inverse_20260616_012409`
+  - `--feature_sets latent_pool temporal_var frame_diff_mean frame_diff_var`
+  - `--dataset_mode candidate_inverse`
+  - `--split_mode row`
+  - `--epochs 30`
+  - `--batch_size 256`
+  - `--hidden_dim 64`
+  - `--feature_embedding_dim 64`
+  - `--lr 3e-4`
+  - `--min_lr 1e-5`
+  - `--warmup_steps 500`
+  - `--weight_decay 1e-4`
+  - `--smooth_l1_beta 0.02`
+  - `--grad_clip 1.0`
+  - `--early_stop_patience 5`
+  - `--dit_dropout 0.05`
+  - `--device cuda`
+  - `--save_val_predictions`
+- Split:
+  - train examples: `40000`
+  - validation examples: `10000`
+  - split mode: `row`
+- Model parameters:
+  - `71045`
+- Completion:
+  - ran all `30` epochs
+  - no early stop triggered
+  - best epoch: `30`
+  - best validation MAE: `0.07593761396706104`
+  - best validation loss: `0.06691185193061829`
+  - best epoch train MAE: `0.07653351860381663`
+- Best epoch validation summary:
+  - bias: `-0.0032232597440481187`
+  - prediction min/max/mean/std: `0.07465098053216934` / `0.8386164307594299` / `0.39608174546957015` / `0.20561251044273376`
+  - MAE by step:
+    - `step_00_09`: `0.0928498020344101`
+    - `step_10_39`: `0.07261506491243311`
+    - `step_40_49`: `0.0687483228470994`
+  - MAE by threshold:
+    - `0.10`: `0.014997302341942836`
+    - `0.15`: `0.03539148792775295`
+    - `0.20`: `0.045847805324606423`
+    - `0.25`: `0.06859489056477255`
+    - `0.30`: `0.07987874489255815`
+    - `0.40`: `0.10076054226516223`
+    - `0.50`: `0.0864502436272883`
+    - `0.60`: `0.07383361327600999`
+    - `0.70`: `0.09040507235947777`
+    - `0.80`: `0.16622635118142076`
+- Final checkpoint validation prediction gate means:
+  - `gate_latent_pool`: `0.602346860973537`
+  - `gate_temporal_var`: `0.1366311730541289`
+  - `gate_frame_diff_mean`: `0.14120697866557166`
+  - `gate_frame_diff_var`: `0.11981498754592612`
+- Interpretation:
+  - Row split is easier than sample split for this model: best val MAE improved from `0.11151796581298112` to `0.07593761396706104`.
+  - Compared with row-split MiniDiT best val MAE `0.03800193872973323`, this 71k-param gated MLP is worse but still substantially better than sample split.
+  - Final gate means are less dominated by `latent_pool` than sample split (`0.60` vs `0.70`), with more weight assigned to temporal/motion features.
+  - As with other runs, the high threshold `0.80` remains the hardest bucket.
+- GPU was idle again after completion.
+
+## 2026-06-29 Transformer Predictor Implementation
+
+- Implemented the first MiniDiT-CLS adaptive threshold predictor code.
+- Added:
+  - `MiniDiTCLSAdaptiveThresholdPredictor` in `adaptive_threshold_predictor/models.py`
+  - `GridMLPThresholdPredictor` capacity baseline in `adaptive_threshold_predictor/models.py`
+  - `GridFeatureThresholdDataset` and `collate_grid_features` in `adaptive_threshold_predictor/data.py`
+  - grid cache builder `adaptive_threshold_predictor/build_grid_feature_cache.py`
+  - `train_gate.py` support for `--model_type mini_dit_cls` and `--model_type grid_mlp`
+- Training output now preserves richer analysis files:
+  - `config.json`, `split.json`, `model_summary.json`
+  - `epoch_metrics.jsonl`, `epoch_metrics.csv`, `metrics.json`
+  - plain state dicts and metadata checkpoints for best/final models
+  - optional final and per-epoch validation predictions
+- Recommended commands were added to `adaptive_threshold_predictor/README.md`.
+- Validation:
+  - `python -m py_compile` passed for `models.py`, `data.py`, `build_grid_feature_cache.py`, and `train_gate.py`.
+  - `git diff --check` passed for the modified adaptive predictor files.
+  - CPU smoke test built a 16-example grid cache at `/hy-tmp/wan22_mini_dit_grid_cache_smoke_20260629`, producing grid shape `[16, 4, 5, 13]`.
+  - CPU smoke tests ran one epoch for reduced-size `mini_dit_cls` and `grid_mlp` models and produced expected metrics/checkpoint/prediction files.
+- No formal full-data training or VBench10 adaptive inference run was launched in this session.
+
+## 2026-06-29 Transformer Predictor Conv3d Revision
+
+- User requested that the predictor use the report's actual Conv3d patch embedding instead of the earlier avg-pooled grid prototype, and asked to ignore control-group work for now.
+- Revised `MiniDiTCLSAdaptiveThresholdPredictor` to use raw latent input:
+  - input `[B,16,12,60,104]`
+  - `Conv3d(16, d_model, kernel_size=(3,12,8), stride=(3,12,8))`
+  - token grid `[4,5,13]`, token count `260`
+  - CLS readout and AdaLN-style conditioning retained
+- Revised `train_gate.py` so `--model_type mini_dit_cls` uses `TraceStepThresholdDataset` directly and no longer requires `--grid_cache_dir`.
+- Checkpoint metadata now includes `feature_extractor` with `type=learned_conv3d_patch_embedding`, `input_shape`, `patch_size`, `token_grid_shape`, and `token_count`.
+- Changed shared training defaults to the recommended MiniDiT settings: batch size `64`, epochs `30`, lr `3e-4`, warmup `500`, SmoothL1 beta `0.02`, grad clip `1.0`, early-stop patience `5`.
+- Updated `adaptive_threshold_predictor/README.md` and `reports/report_transformer_predictor_architecture.md` to document Conv3d patch embedding as the recommended `mini_dit_cls` path.
+- Validation:
+  - CPU smoke test ran `mini_dit_cls` from raw latent with `--dit_patch_size 3 12 8`.
+  - Smoke checkpoint metadata confirmed `token_grid_shape=[4,5,13]` and `token_count=260`.
+
+## 2026-06-29 MiniDiT Convpatch Training Launch
+
+- Launched full-data MiniDiT-CLS Conv3d patch predictor training in tmux.
+- Active tmux session:
+  - `wan22_mini_dit_convpatch_train_20260629_214906`
+- Result root:
+  - `/hy-tmp/wan22_adaptive_threshold_mini_dit_cls_convpatch_3x12x8_d96_l2_bs128_20260629_214906`
+- Workspace symlink:
+  - `experiment_results/wan22_adaptive_threshold_mini_dit_cls_convpatch_3x12x8_d96_l2_bs128_20260629_214906`
+- Launch script:
+  - `/hy-tmp/wan22_adaptive_threshold_mini_dit_cls_convpatch_3x12x8_d96_l2_bs128_20260629_214906/commands/launch_train.sh`
+- Log:
+  - `/hy-tmp/wan22_adaptive_threshold_mini_dit_cls_convpatch_3x12x8_d96_l2_bs128_20260629_214906/logs/train.log`
+- Training configuration:
+  - `--model_type mini_dit_cls`
+  - `--dataset_mode candidate_inverse`
+  - `--batch_size 128`
+  - `--epochs 30`
+  - `--lr 3e-4`
+  - `--min_lr 1e-5`
+  - `--warmup_steps 500`
+  - `--smooth_l1_beta 0.02`
+  - `--grad_clip 1.0`
+  - `--early_stop_patience 5`
+  - `--dit_dim 96`
+  - `--dit_layers 2`
+  - `--dit_heads 4`
+  - `--dit_patch_size 3 12 8`
+  - `--num_workers 8`
+  - `--save_val_predictions`
+  - `--save_epoch_val_predictions`
+- Pre-launch checks:
+  - GPU available and idle: A100 80GB.
+  - `/hy-tmp` had about `68G` free.
+  - Raw latent DataLoader throughput check after suppressing repeated `torch.load` warnings: `512` examples with `num_workers=8` took about `8.833s` on that short test (`57.96 examples/s`; cold-cache/worker-startup affected).
+  - GPU smoke with `batch_size=128` passed.
+- Important fix before final launch:
+  - First tmux launch at `20260629_214241` was stopped before epoch output because repeated PyTorch `torch.load` FutureWarnings were emitted for every raw latent load and slowed/noised the run.
+  - `adaptive_threshold_predictor/data.py` was updated to use `weights_only=True` for trace/cache `torch.load` calls, eliminating the warning flood.
+- First epoch result from active run:
+  - epoch elapsed: `200.632s`
+  - train loss: `0.1223346`
+  - train MAE: `0.1319188`
+  - val loss: `0.1085956`
+  - val MAE: `0.1181465`
+  - val prediction range: min `0.1064772`, max `0.7293686`, mean `0.4027086`, std `0.1986593`
+- Status at latest check:
+  - tmux session still running.
+  - `epoch_metrics.jsonl` contains epoch 1.
+  - `best_model.pt`, `best_model_checkpoint.pt`, and `val_predictions_epoch_001.csv` were created.
+
+## 2026-06-29 Raw Latent Packed Cache Build
+
+- User requested building a full raw latent packed cache under `/hy-tmp` without stopping the active MiniDiT training.
+- Added cache builder:
+  - `adaptive_threshold_predictor/build_raw_latent_cache.py`
+- The builder packs raw step latents from `TraceStepThresholdDataset` into fp16 shard files:
+  - one shard default: `512` examples
+  - latent shape per example: `[16, 12, 60, 104]`
+  - expected full cache size: roughly `115-120G`
+- Result root:
+  - `/hy-tmp/wan22_adaptive_threshold_raw_latent_packed_cache_candidate_inverse_fp16_20260629_221805`
+- Active tmux session:
+  - `wan22_raw_latent_cache_build_20260629_221805`
+- Launch script:
+  - `/hy-tmp/wan22_adaptive_threshold_raw_latent_packed_cache_candidate_inverse_fp16_20260629_221805/commands/build_cache.sh`
+- Log:
+  - `/hy-tmp/wan22_adaptive_threshold_raw_latent_packed_cache_candidate_inverse_fp16_20260629_221805/logs/build.log`
+- Build command uses low priority:
+  - `ionice -c2 -n7 nice -n 10`
+  - `--dtype float16`
+  - `--shard_size 512`
+  - `--batch_size 16`
+  - `--num_workers 2`
+- Pre-launch checks:
+  - `/hy-tmp` was expanded to `800G`, with about `268G` free.
+  - Source trace root `/hy-tmp/openvid_100_seacache_trace_data` was about `135G`.
+  - 20-example smoke cache succeeded.
+- Early build progress:
+  - `8192/50000` examples processed in `127.98s`
+  - throughput about `64 examples/s`
+  - `16` shard files written, cache directory size about `19G`
+  - projected completion time about `13-15 minutes` at early throughput
+- Active MiniDiT training was not stopped. At the same check it had reached epoch `9`.
+
 ## 2026-06-23 Project Compute Cost Scan
 
 - Scanned experiment result roots under `/hy-tmp`, including `wan22_*` archives and `/hy-tmp/openvid_100_seacache_trace_data`.
@@ -222,6 +739,36 @@ The main report covers fixed ZEUS, ZEUS-threshold reuse_interp, and the three-ca
 ## 2026-06-24 VBench10 ZEUS / SeaCache Report
 
 - Added `reports/report_vbench10_zeus_threshold_seacache.md`.
+
+## 2026-06-29 Adaptive Predictor Architecture Review
+
+- Reviewed the original MLP adaptive threshold predictor in `adaptive_threshold_predictor/`:
+  - MLP path uses pooled latent-derived features plus timestep/PSNR condition MLP.
+  - Default dataset mode remains `candidate_inverse`: candidate latent + achieved PSNR -> threshold label.
+  - Historical training showed strong early overfitting; `2x2x2 temporal_mean`, especially `hidden_dim=16`, was the best lightweight MLP setting.
+- Reviewed the new Transformer candidate implementation:
+  - `build_grid_feature_cache.py` creates fixed `[16,4,5,13]` grid features with `avg_pool3d` patch `(3,12,8)`.
+  - `MiniDiTCLSAdaptiveThresholdPredictor` uses factorized learned 3D position embeddings, CLS readout, AdaLN-style conditioning, and output constrained to `[0.10,0.80]`.
+  - Current implementation is lighter than the architecture proposal because it uses average-pooled grid features plus `Linear(16->dim)`, not a learnable `Conv3d(16->dim,kernel=stride=(3,12,8))` patch embed.
+- Main review conclusions:
+  - Network shape and conditioning design are broadly reasonable as a small first Transformer, but it should be compared against `grid_mlp` and the old MLP because pooled grid features may be the main improvement, not attention.
+  - The largest methodological risk remains data/label design: `candidate_inverse` trains on achieved PSNR and candidate-run latents, while online inference uses desired PSNR and adaptive-run latents.
+  - Transformer training defaults in `train_gate.py` are still legacy defaults unless overridden; first real runs should explicitly use lr `3e-4`, batch size around `64`, `SmoothL1 beta=0.02`, grad clip `1.0`, and early stopping.
+  - No code changes were made during this review beyond this progress entry and the session log.
+
+## 2026-06-29 Adaptive Predictor Recheck After ConvPatch Revision
+
+- Rechecked the user-updated Transformer predictor implementation.
+- The `mini_dit_cls` path now uses raw traced latent inputs and a learnable `Conv3d(16 -> dim, kernel=stride=(3,12,8))` patch embedding, matching the architecture report more closely than the earlier avg-pooled grid prototype.
+- `train_gate.py` now routes `mini_dit_cls` through `TraceStepThresholdDataset`, adds `--dit_patch_size`, uses Transformer-oriented default training settings, and stores `feature_extractor` metadata in metrics/checkpoints.
+- Lightweight validation:
+  - `py_compile` passed for adaptive predictor modules.
+  - A reduced MiniDiT forward pass produced `[1,1]` output within `[0.10,0.80]`.
+  - Default `dim=96,layers=2,heads=4` model has `724,513` trainable parameters and patch grid `(16,4,5,13)`, consistent with the report's scale.
+- Remaining review notes:
+  - The data/label mismatch remains: `candidate_inverse` still trains on achieved PSNR and fixed-threshold candidate latents, while online adaptive inference will use desired PSNR and adaptive-run latents.
+  - Changing shared defaults in `train_gate.py` affects old MLP runs unless their commands explicitly override lr/epochs/batch/loss settings.
+  - The fixed avg-pooled grid cache path remains useful for `grid_mlp` controls but is no longer the recommended `mini_dit_cls` path.
 - Report covers only VBench10 experiment environment/settings, per-prompt results, and 10-prompt aggregate results for fixed ZEUS, ZEUS-threshold, and timestep-only SeaCache.
 - Data sources:
   - `/hy-tmp/wan22_zeus_vbench10_50step_45f_480p_20260624_003030/results/summary.csv`
@@ -1563,3 +2110,751 @@ Fixed SeaCache comparison update:
   - `python -m py_compile` passed for the main ZEUS VBench10 scripts, the new ZEUS UniPC VBench10 scripts, and `compute_psnr.py`.
   - `git diff --cached --check` passed.
 - No inference, PSNR, or dataset jobs were run.
+
+## 2026-06-25 BUG.md Cache Review
+
+- Reviewed external `BUG.md` claims against current repository code.
+- Static review only; no GPU inference, PSNR, or regression experiments were run.
+- Main conclusion: many items in `BUG.md` are real code patterns but not clearly correctness bugs. SeaCache `previous_feature` updates on reuse and accumulated distance behavior are consistent with comparing consecutive filtered features / accumulated-threshold gating, while adaptive predictor raw-latent features are intentionally matched between feature-cache training and online inference.
+- Items still worth treating as actionable or at least low-risk cleanup candidates: SeaCache/SeaCFG/BlockGroup scheduler sigma anchoring should be rechecked against the intended SeaCache formula; SeaCache default final-step cutoff is a conservative speed tradeoff; FFT gain normalization near zero is a robustness edge case; BlockGroup accumulated cutoff can clear `pending_feature` defensively.
+- `BUG.md` remains untracked and was not modified.
+
+## 2026-06-25 Official SeaCache Alignment
+
+- Cloned official SeaCache reference to `/hy-tmp/seacache_official_ref` for code comparison.
+- Official reference commit: `3b1c688 Update README.md`.
+- Compared official `Wan2.1/seacache_generate.py` and `Wan2.1/util_seacache.py` with local `wan/timestep_cache.py`.
+- Confirmed official Wan2.1 SeaCache behavior:
+  - state is split per CFG branch in the reference by even/odd call count; local explicit `(model_stage, branch)` keys remain the correct project adaptation.
+  - first-block modulated norm input is the metric feature.
+  - SEA filter uses `scheduler.sigmas[idx]`, not `idx + 1`.
+  - accumulated relative L1 is not reset on reuse; it resets only on forced recompute windows or threshold crossing.
+  - default retention/cutoff is first step and final step per branch; with `use_ret_steps`, first 5 steps and no final cutoff.
+  - `previous_feature` is updated on every call.
+- Fixed one real local mismatch: during retention/cutoff/history-missing/forced recompute paths, local SeaCache now stores the unfiltered modulated input and skips SEA filtering, matching official Wan2.1. Before this change, local code filtered these forced-compute steps before storing `previous_feature`.
+- Validation:
+  - `python -m py_compile wan/timestep_cache.py` passed.
+  - CPU-only behavior check passed by loading `wan/timestep_cache.py` directly and verifying filter calls are skipped for ret/cutoff steps but used for middle reuse decisions.
+
+## 2026-06-27 SeaCache Official Alignment Recheck
+
+- Rechecked local Wan2.2 timestep SeaCache against official SeaCache Wan2.1 reference at `/hy-tmp/seacache_official_ref` commit `3b1c688`.
+- Static comparison sources:
+  - official: `/hy-tmp/seacache_official_ref/Wan2.1/seacache_generate.py`
+  - official: `/hy-tmp/seacache_official_ref/Wan2.1/util_seacache.py`
+  - local: `wan/timestep_cache.py`, `wan/modules/model.py`, `wan/text2video.py`, `generate.py`
+- Confirmed core behavior is aligned:
+  - metric feature is first block's timestep-modulated norm input.
+  - filtered middle-step feature uses flow scheduler sigma at the same step index.
+  - SEA filter formula and mean-normalized full FFT implementation match official output exactly on a CPU tensor check.
+  - threshold gating uses accumulated relative L1 and resets accumulated distance only on threshold-crossing recompute or forced retention/cutoff windows.
+  - cache hit reuses the previous transformer-block residual and still runs the model head/unpatchify.
+  - default ret/cutoff semantics are equivalent to official first and final denoising step forced recompute per branch; `--seacache_use_ret_steps` maps to first 5 steps and no tail cutoff.
+- Necessary Wan2.2 adaptations:
+  - local state uses explicit `(model_stage, branch)` keys instead of official Wan2.1's even/odd model-call counter, because Wan2.2 switches high/low DiT stages and also composes with outer CFG cache.
+  - local SeaCache is integrated inside `WanModel.forward` instead of monkey-patching class-level model state.
+  - local code passes scheduler sigmas into the cache object rather than storing the scheduler on the model class.
+  - local code exposes tunable `power_const`, `eps`, `norm_mode`, and optional `num_steps`; official Wan2.1 hard-codes the practical run path to `power_exp=3.0`, `norm_mode=mean`, `eps=1e-16`, `power_const=1.0`.
+- Validation:
+  - `python -m py_compile wan/timestep_cache.py wan/modules/model.py wan/text2video.py generate.py` passed.
+  - `git diff --check` passed.
+  - CPU direct-load test confirmed local SEA filter exactly matches official `apply_sea_with_scheduler` for the checked tensor and scheduler sigmas (`filter_max_abs_diff 0.0`).
+  - CPU direct-load test confirmed ret/cutoff forced steps do not call `_filter_feature`, while middle steps do.
+- No GPU inference, PSNR, or official Ali/Wan2.1 latency reproduction run was launched in this recheck.
+
+## 2026-06-27 SeaCache UniPC Ali-10 / VBench10 Scripts
+
+- User requested checking sampler impact on generation quality by switching the SeaCache experiment solver to `unipc` while keeping other settings unchanged, for `ali_10` and `VBench10`, with separate experiment scripts and queued execution.
+- Added separate launch wrappers:
+  - `experiments/seacache_unipc_ali10_50step_45f_480p/run_tmux.sh`
+  - `experiments/seacache_unipc_vbench10_50step_45f_480p/run_tmux.sh`
+  - READMEs in both experiment directories.
+- Added queue launcher:
+  - `experiments/seacache_unipc_queue_ali10_vbench10_50step_45f_480p.sh`
+  - Queue order: Ali-10 first, VBench10 second.
+- Both wrappers reuse the existing single-process SeaCache runner `experiments/seacache_vbench10_50step_45f_480p/run_batch.py` and pass `--sample_solver unipc`.
+- Experiment settings retained:
+  - task `t2v-A14B`, ckpt `/hy-tmp/models/Wan2.2-T2V-A14B`, seed `42`, size `832*480`, frame_num `45`, sample_steps `50`, offload/dtype defaults, timestep cache `seacache`, block cache none, CFG cache none.
+  - thresholds `0.10 0.20 0.30 0.50`.
+  - output roots default to `/hy-tmp/wan22_seacache_unipc_ali10_50step_45f_480p_<timestamp>` and `/hy-tmp/wan22_seacache_unipc_vbench10_50step_45f_480p_<timestamp>`.
+- Validation:
+  - `bash -n` passed for both new `run_tmux.sh` wrappers and the queue script.
+  - CPU validation passed for Ali-10 after threshold narrowing: 10 prompts, 4 thresholds, expected 10 baselines and 40 SeaCache candidates.
+  - CPU validation passed for VBench10 after threshold narrowing: 10 prompts, 4 thresholds, expected 10 baselines and 40 SeaCache candidates.
+- Run status:
+  - Initially not launched because the instance was not in GPU mode; `nvidia-smi` returned `No devices were found`.
+  - Later launched after GPU became available.
+  - Queue session: `wan22_seacache_unipc_queue_20260627_023222`.
+  - Ali-10 session: `wan22_seacache_unipc_queue_20260627_023222_ali10`.
+  - Ali-10 result root: `/hy-tmp/wan22_seacache_unipc_ali10_50step_45f_480p_20260627_023222`.
+  - VBench10 result root, queued second: `/hy-tmp/wan22_seacache_unipc_vbench10_50step_45f_480p_20260627_023222`.
+  - Launch check: GPU was `NVIDIA A100 80GB PCIe`, idle at launch; Ali-10 runner started and was loading WanT2V checkpoint shards.
+  - User asked whether old ZEUS UniPC baselines could be reused. The queue was paused to avoid unnecessary baseline generation.
+  - The old ZEUS UniPC reports show matching baseline parameters, but the expected local roots are missing and the `experiment_results/wan22_zeus_unipc_*` symlinks are dangling:
+    - `/hy-tmp/wan22_zeus_unipc_ali10_50step_45f_480p_20260624_195011`
+    - `/hy-tmp/wan22_zeus_unipc_vbench10_50step_45f_480p_20260624_192306`
+  - Downloaded VBench archives contain reusable DPM++ VBench baselines, not UniPC baselines, so they cannot be used as the UniPC PSNR reference.
+  - The first launch had already completed `ali_001` baseline artifacts in the Ali-10 result root. The queue was restarted with the same timestamp/root and `--resume_existing`, so `ali_001` can be skipped while the remaining missing baselines/candidates run.
+  - Restarted queue session: `wan22_seacache_unipc_queue_20260627_023222`; Ali-10 child session restarted at 2026-06-27 02:54.
+  - User pointed out the initial wrappers did not satisfy the separate batch-runner experiment-script requirement because they called the old VBench10 runner directly.
+  - Corrected by adding dedicated formal runners and summarizers:
+    - `experiments/seacache_unipc_ali10_50step_45f_480p/run_batch.py`
+    - `experiments/seacache_unipc_ali10_50step_45f_480p/summarize_results.py`
+    - `experiments/seacache_unipc_vbench10_50step_45f_480p/run_batch.py`
+    - `experiments/seacache_unipc_vbench10_50step_45f_480p/summarize_results.py`
+  - Fixed wrappers to call their own local `run_batch.py`, use `selected_records.{jsonl,csv}`, set `sample_solver=unipc` in summaries, and write method-specific result roots.
+  - Validation after correction:
+    - `python -m py_compile` passed for both new `run_batch.py` and `summarize_results.py` files.
+    - CPU validation passed for both new runners with 10 prompts, 4 thresholds, and 40 expected candidates.
+    - `bash -n` and `git diff --check` passed.
+  - Restarted the queue again at 2026-06-27 03:14 using the corrected dedicated Ali-10 runner; process command confirmed `experiments/seacache_unipc_ali10_50step_45f_480p/run_batch.py`.
+  - Added and launched a periodic monitor:
+    - script: `experiments/seacache_unipc_monitor_ali10_vbench10_50step_45f_480p.sh`
+    - tmux session: `wan22_seacache_unipc_monitor_20260627_023222`
+    - log: `/hy-tmp/wan22_seacache_unipc_ali10_50step_45f_480p_20260627_023222/logs/queue_monitor.log`
+    - interval: 600 seconds.
+  - First monitor record showed Ali-10 running normally, GPU at about `47351 MiB` and `100%`, 1 baseline MP4, 1 candidate MP4/time/PSNR from resumed partial output, and 0 failed files; VBench10 had not started yet.
+  - VBench10 progress check at 2026-06-27 14:41 CST:
+    - tmux sessions still active: queue, monitor, and `wan22_seacache_unipc_queue_20260627_023222_vbench10`.
+    - GPU active: `NVIDIA A100 80GB PCIe`, about `47345 MiB`, `100%`.
+    - VBench10 artifacts: 10/10 baselines, 38/40 SeaCache candidates, 38/40 candidate time files, 38/40 PSNR JSON files, 48/50 ffprobe JSON files, 0 failed files.
+    - Missing candidates were only `th_0p30/vbench10_010.mp4` and `th_0p50/vbench10_010.mp4`; runner log showed it was processing `vbench10_010`.
+    - Summary/aggregate tables were not yet generated because the batch had not completed.
+
+## 2026-06-27 SeaCache DPM++ Ali-10 Result Check
+
+- User asked whether SeaCache with `dpm++` on full `ali_10` had already been measured.
+- Checked `PROGRESS.md`, `reports/`, `logs/`, `experiments/`, `/hy-tmp/wan22_*` result roots, and `experiment_results/` symlinks.
+- Finding: no complete formal `SeaCache + dpm++ + ali_10` 10-prompt result root was found.
+- Existing related data:
+  - `SeaCache + dpm++` on Ali prompt 1 only: `/hy-tmp/wan22_seacache_50step_45f_480p_20260611_191733`.
+  - `SeaCache + dpm++` on Ali prompt 2 only: `/hy-tmp/wan22_seacache_prompt02_dense_20260611_204826` and `/hy-tmp/wan22_seacache_prompt02_highthr_20260612_000218`.
+  - Full `SeaCache + unipc + ali_10`: `/hy-tmp/wan22_seacache_unipc_ali10_50step_45f_480p_20260627_023222`, 10 baselines and 40 candidates completed.
+- Conclusion: use the prompt-01/02 `dpm++` SeaCache results only as a small pilot; a formal full Ali-10 `dpm++` SeaCache run is still missing if required for direct comparison.
+
+## 2026-06-30 Gated 4-Feature MLP Long Row-Split Check
+
+- User asked whether the earlier 30-epoch row-split gated MLP run was too short.
+- Completed a GPU confirmation run with the gated four-feature MLP:
+  - Result root: `/hy-tmp/wan22_adaptive_threshold_mlp_gated_4feature_rowsplit_gpu_long100_20260630_015638`
+  - Workspace symlink: `experiment_results/wan22_adaptive_threshold_mlp_gated_4feature_rowsplit_gpu_long100_20260630_015638`
+  - Feature cache: `/hy-tmp/wan22_adaptive_threshold_feature_cache_candidate_inverse_20260616_012409`
+  - Features: `latent_pool`, `temporal_var`, `frame_diff_mean`, `frame_diff_var`
+  - Split mode: `row`
+  - Training: `100` epochs, `early_stop_patience=20`, `min_lr=1e-6`, batch size `256`, CUDA.
+- Result:
+  - Completed all 100 epochs; no early stop.
+  - Parameter count: `71,045`.
+  - Best epoch: `97`.
+  - Best validation MAE: `0.06126960859298706`.
+  - Best validation loss: `0.052473511600494384`.
+  - Train MAE at best epoch: `0.0634434845218435`.
+  - Final epoch validation MAE: `0.06131729580387473`.
+- Comparison:
+  - Earlier gated MLP row split 30-epoch run best validation MAE: `0.07593761396706104`.
+  - In this long run, epoch 30 validation MAE was `0.07319095213487745`, and it kept improving to `0.06126960859298706`.
+  - Relative improvement from the earlier 30-epoch result to the 100-epoch best is about `19.3%`; relative improvement from this run's epoch 30 to epoch 97 is about `16.3%`.
+  - Conclusion: 30 epochs were materially too short for this gated MLP row-split setting, but training longer still does not close the gap to the row-split MiniDiT reference best validation MAE `0.03800193872973323`.
+- Best-epoch diagnostics:
+  - Gate means from saved validation predictions: `latent_pool=0.4814`, `temporal_var=0.1602`, `frame_diff_mean=0.1454`, `frame_diff_var=0.2130`.
+  - Validation MAE by threshold: `0.10=0.0132`, `0.15=0.0289`, `0.20=0.0372`, `0.25=0.0523`, `0.30=0.0575`, `0.40=0.0848`, `0.50=0.0724`, `0.60=0.0695`, `0.70=0.0657`, `0.80=0.1338`.
+  - Validation MAE by step range: `step_00_09=0.0821`, `step_10_39=0.0565`, `step_40_49=0.0545`.
+- No commit was made.
+
+## 2026-06-30 Gated MLP 5-Feature Retrain
+
+- Corrected the gated multi-feature MLP default from 4 features to 5 features by adding the omitted `temporal_mean` feature.
+- Current recommended gated feature set:
+  - `latent_pool`
+  - `temporal_mean`
+  - `temporal_var`
+  - `frame_diff_mean`
+  - `frame_diff_var`
+- Updated:
+  - `adaptive_threshold_predictor/models.py`
+  - `adaptive_threshold_predictor/README.md`
+  - `reports/report_gated_multifeature_mlp_architecture.md`
+- Verified parameter count for the 5-feature gated MLP:
+  - `83,526` trainable parameters
+  - feature encoders `62,080`
+  - condition encoder `4,352`
+  - gate head `4,485`
+  - prediction head `12,609`
+- Removed superseded 4-feature training outputs and workspace symlinks:
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_4feature_samplesplit_20260630_013006`
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_4feature_rowsplit_gpu_20260630_014852`
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_4feature_rowsplit_gpu_long100_20260630_015638`
+  - matching `experiment_results/wan22_adaptive_threshold_mlp_gated_4feature_*` symlinks
+- New 5-feature result roots:
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_5feature_samplesplit_20260630_021641`
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_5feature_rowsplit_gpu_20260630_021641`
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_5feature_rowsplit_gpu_long100_20260630_021641`
+  - matching symlinks exist under `experiment_results/`
+- Training commands are archived in each result root under `commands/launch_train.sh`; raw logs are under `logs/train.log`.
+- 5-feature training results:
+
+| Run | Split | Epochs Run | Best Epoch | Best Val MAE | Best Val Loss | Final Val MAE |
+|---|---|---:|---:|---:|---:|---:|
+| gated 5-feature sample split 30 | sample | 12 / 30, early stopped | 7 | `0.1142528785` | `0.1050056725` | `0.1178081666` |
+| gated 5-feature row split 30 | row | 30 / 30 | 30 | `0.0756697811` | `0.0667008773` | `0.0756697811` |
+| gated 5-feature row split 100 | row | 100 / 100 | 98 | `0.0601118673` | `0.0513865515` | `0.0601155481` |
+
+- Mean validation gate weights:
+
+| Run | latent_pool | temporal_mean | temporal_var | frame_diff_mean | frame_diff_var |
+|---|---:|---:|---:|---:|---:|
+| sample split 30 | `0.5146` | `0.2312` | `0.0784` | `0.0689` | `0.1068` |
+| row split 30 | `0.4112` | `0.2113` | `0.1137` | `0.1136` | `0.1502` |
+| row split 100 | `0.3906` | `0.1825` | `0.1439` | `0.1116` | `0.1714` |
+
+- Comparison against superseded 4-feature gated MLP:
+  - sample split 30 became worse: old `0.1115179658` -> new `0.1142528785`.
+  - row split 30 improved marginally: old `0.0759376140` -> new `0.0756697811`.
+  - row split 100 improved modestly: old `0.0612696086` -> new `0.0601118673`.
+- Interpretation:
+  - Adding `temporal_mean` helps row-split validation slightly, especially in the 100-epoch confirmation run.
+  - The sample-split result does not improve and early-stops at epoch 12.
+  - Even the 5-feature row-split 100 result remains substantially behind the current MiniDiT row-split reference MAE `0.0380019387`.
+- Validation:
+  - `py_compile` passed for `adaptive_threshold_predictor/models.py`, `adaptive_threshold_predictor/data.py`, and `adaptive_threshold_predictor/train_gate.py`.
+  - `git diff --check` passed.
+  - No `adaptive_threshold_predictor.train_gate` processes remained after training.
+  - GPU was idle after completion: `0 MiB / 81920 MiB`, no running GPU processes.
+- Session log: `logs/session_20260630_gated_mlp_5feature_retrain.md`.
+- No commit was made.
+
+## 2026-06-30 Gated MLP Range-Constrained Output Retrain
+
+- User identified a semantic mismatch: the 5-feature gated MLP output head used
+  a direct sigmoid output range `[0, 1]`, while the MiniDiT/Transformer predictor
+  used a scaled threshold range.
+- Updated the MLP-family threshold heads to use:
+
+```text
+threshold = min_threshold + sigmoid(raw) * (max_threshold - min_threshold)
+```
+
+- Current defaults are `min_threshold=0.10` and `max_threshold=0.80`.
+- Updated `adaptive_threshold_predictor/models.py` so relevant MLP/condition
+  classes emit raw logits and then apply the scaled sigmoid mapping:
+  - `ImprovedAdaCacheGate`
+  - `CachedFeatureAdaCacheGate`
+  - `GatedFeatureFusionAdaCacheGate`
+  - `CachedGatedFeatureAdaCacheGate`
+  - `GatedMultiFeatureAdaCacheGate`
+  - `ConditionOnlyAdaCacheGate`
+- Updated `adaptive_threshold_predictor/train_gate.py` so `build_model()` passes
+  `--min_threshold` and `--max_threshold` into the MLP-family model constructors.
+- Updated documentation:
+  - `adaptive_threshold_predictor/README.md`
+  - `reports/report_gated_multifeature_mlp_architecture.md`
+- Parameter count is unchanged:
+  - 5-feature gated MLP: `83,526` trainable parameters.
+- Validation before full retraining:
+  - `py_compile` passed for `adaptive_threshold_predictor/models.py`,
+    `adaptive_threshold_predictor/train_gate.py`, and
+    `adaptive_threshold_predictor/data.py`.
+  - Random forward smoke for `CachedGatedFeatureAdaCacheGate` with five features
+    produced `[B, 1]` outputs inside `[0.10, 0.80]`.
+- Removed temporary CPU smoke output:
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_5feature_range_smoke_20260630_0345`
+- New range-constrained result roots:
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_5feature_range_samplesplit_20260630_035000`
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_5feature_range_rowsplit_gpu_20260630_035000`
+  - `/hy-tmp/wan22_adaptive_threshold_mlp_gated_5feature_range_rowsplit_gpu_long100_20260630_035000`
+  - matching symlinks exist under `experiment_results/`
+- Training commands are archived in each result root under `commands/launch_train.sh`; logs are under `logs/train.log`.
+- Range-constrained 5-feature results:
+
+| Run | Split | Epochs Run | Best Epoch | Best Val MAE | Best Val Loss | Final Val MAE | Best Prediction Range |
+|---|---|---:|---:|---:|---:|---:|---|
+| range sample split 30 | sample | 14 / 30, early stopped | 9 | `0.1143567288` | `0.1049280047` | `0.1278297383` | `[0.1023, 0.7303]` |
+| range row split 30 | row | 30 / 30 | 30 | `0.0770497653` | `0.0678418150` | `0.0770497653` | `[0.1040, 0.7743]` |
+| range row split 100 | row | 100 / 100 | 98 | `0.0610311001` | `0.0522424302` | `0.0610505000` | `[0.1010, 0.7985]` |
+
+- Mean validation gate weights:
+
+| Run | latent_pool | temporal_mean | temporal_var | frame_diff_mean | frame_diff_var |
+|---|---:|---:|---:|---:|---:|
+| sample split 30 | `0.5464` | `0.1839` | `0.0945` | `0.0986` | `0.0766` |
+| row split 30 | `0.4781` | `0.1967` | `0.1267` | `0.0998` | `0.0987` |
+| row split 100 | `0.3987` | `0.2533` | `0.0942` | `0.0962` | `0.1576` |
+
+- Comparison against the previous direct-sigmoid `[0, 1]` 5-feature runs:
+
+| Split / Budget | Previous Best Val MAE | Range-Constrained Best Val MAE | Delta |
+|---|---:|---:|---:|
+| sample split 30 | `0.1142528785` | `0.1143567288` | `+0.0001038503` |
+| row split 30 | `0.0756697811` | `0.0770497653` | `+0.0013799842` |
+| row split 100 | `0.0601118673` | `0.0610311001` | `+0.0009192327` |
+
+- Interpretation:
+  - The output mismatch is fixed; saved predictions now stay inside the intended
+    `[0.10, 0.80]` threshold range.
+  - Offline threshold MAE did not improve: sample split is essentially
+    unchanged, and row split is slightly worse.
+  - Row split still benefits from longer training (`0.07705` at 30 epochs to
+    `0.06103` at 100 epochs), but the gated MLP remains behind the MiniDiT
+    row-split reference MAE `0.0380019387`.
+- Final checks:
+  - `py_compile` passed.
+  - `git diff --check` passed.
+  - No `adaptive_threshold_predictor.train_gate` process remained after
+    training.
+- Session log: `logs/session_20260630_gated_mlp_range_retrain.md`.
+- No commit was made.
+
+## 2026-06-30 SeaCache Sampler Comparison Availability Check
+
+- User asked whether complete SeaCache `dpm++` and `unipc` performance comparison results exist.
+- Checked current result roots and summary/aggregate tables.
+- Complete full VBench10 comparison exists:
+  - `dpm++`: `/hy-tmp/wan22_vbench10_three_cache_full_merge_and_timestep_only_full_20260623/timestep_only_seacache_vbench10_full/wan22_seacache_vbench10_50step_45f_480p_20260618_161845/merged/summary.csv`
+  - `dpm++` aggregate: `/hy-tmp/wan22_vbench10_three_cache_full_merge_and_timestep_only_full_20260623/timestep_only_seacache_vbench10_full/wan22_seacache_vbench10_50step_45f_480p_20260618_161845/merged/aggregate_by_threshold.csv`
+  - `unipc`: `/hy-tmp/wan22_seacache_unipc_vbench10_50step_45f_480p_20260627_023222/results/summary.csv`
+  - `unipc` aggregate: `/hy-tmp/wan22_seacache_unipc_vbench10_50step_45f_480p_20260627_023222/results/aggregate_by_threshold.csv`
+  - Both have 10 VBench10 samples; overlapping thresholds are `0.10`, `0.20`, `0.30`, and `0.50`.
+- Complete full Ali-10 comparison does not exist:
+  - full `unipc` Ali-10 exists at `/hy-tmp/wan22_seacache_unipc_ali10_50step_45f_480p_20260627_023222/results/summary.csv`.
+  - full `dpm++` Ali-10 remains missing; only Ali prompt 1/2 pilot results exist under `/hy-tmp/wan22_seacache_50step_45f_480p_20260611_191733`, `/hy-tmp/wan22_seacache_prompt02_dense_20260611_204826`, and `/hy-tmp/wan22_seacache_prompt02_highthr_20260612_000218`.
+- Therefore: full sampler comparison is available for VBench10, but not for Ali-10.
+
+## 2026-06-30 Sampling Solver Impact Report Update
+
+- User asked to add the VBench10 SeaCache sampler comparison, mimic the existing format, rename the report to sampling-solver impact, and split it into SeaCache and ZEUS parts.
+- Replaced old ZEUS-only solver comparison report path with the new report:
+  - old: `reports/report_zeus_solver_ali10_vbench10_comparison_20260624.md`
+  - new: `reports/report_sampling_solver_impact_zeus_seacache_20260630.md`
+- New report title: `Sampling Solver Impact on ZEUS and SeaCache`.
+- Preserved the ZEUS aggregate and per-sample comparisons for ali-10 and VBench10.
+- Added SeaCache VBench10:
+  - source artifact table for `dpm++` and `unipc` summary/aggregate CSVs.
+  - aggregate comparison for thresholds `0.10`, `0.20`, `0.30`, and `0.50`.
+  - per-sample comparison tables for each overlapping threshold.
+- Kept the report in a table-focused format and removed explanatory/takeaway text per user request.
+- Added a data-coverage table clarifying that full SeaCache sampler comparison exists for VBench10 but not for Ali-10, because full `SeaCache + dpm++ + ali-10` remains missing.
+- Validation:
+  - verified SeaCache source CSVs exist and row counts match: `dpm++` aggregate 10 thresholds, `unipc` aggregate 4 thresholds, both summaries have 10 VBench10 samples and 10 rows for each overlapping threshold.
+  - manually recomputed overlapping SeaCache aggregate deltas from source CSVs and confirmed the report values.
+  - `git diff --check -- reports/report_sampling_solver_impact_zeus_seacache_20260630.md reports/report_zeus_solver_ali10_vbench10_comparison_20260624.md` passed.
+
+## 2026-06-30 Wan2.1 vs Wan2.2 Model Difference Report Merge
+
+- User asked to simplify two externally written reports:
+  - `reports/report_seacache_wan21_wan22_ali10_unipc_2026-06-30.md`
+  - `reports/report_zeus_wan21_wan22_ali10_unipc_2026-06-30.md`
+- Removed the sampler-difference comparison section from the SeaCache report, including the first-two-prompt DPM++ vs UniPC comparison and remaining sampler-mismatch wording.
+- Added a unified table-focused model-difference report:
+  - `reports/report_model_difference_zeus_seacache_wan21_wan22_20260630.md`
+- The new report follows the compact format of `reports/report_sampling_solver_impact_zeus_seacache_20260630.md`:
+  - data coverage.
+  - shared configuration.
+  - source artifacts.
+  - ZEUS method/config/results.
+  - SeaCache method/config/results.
+  - combined model-difference summary and caveats.
+- No experiments were run and no commit was made.
+- Session log: `logs/session_20260630_model_difference_report_merge.md`.
+
+Follow-up edit in the same report:
+
+- User requested removing all explanatory text and keeping only each experiment's configuration, complete results, and aggregate results.
+- Rewrote `reports/report_model_difference_zeus_seacache_wan21_wan22_20260630.md` as a table-only report:
+  - ZEUS experiment configuration.
+  - ZEUS schedule configuration.
+  - ZEUS aggregate results.
+  - per-sample results for Wan2.1 official demo, Wan2.1 strict Euler, Wan2.1 strict UniPC, and Wan2.2 strict UniPC high/low reset.
+  - Wan2.1 strict UniPC vs Wan2.2 strict UniPC aggregate and per-sample comparisons.
+  - SeaCache experiment configuration.
+  - Wan2.2 SeaCache cache configuration.
+  - SeaCache aggregate results.
+  - per-sample results for Wan2.1 Ali-10 and Wan2.2 Ali-10.
+  - Wan2.1 vs Wan2.2 SeaCache aggregate and per-sample comparisons.
+- Removed method introductions, logic descriptions, interpretation, caveats, and narrative conclusion sections.
+
+## 2026-06-30 5-Feature Gated MLP Online Adaptive SeaCache Queue
+
+- User noted that a Transformer/MiniDiT adaptive predictor online validation was
+  currently running under `adaptive_seacache_wan22` and requested the same
+  validation for the 5-feature gated MLP architecture.
+- Current running Transformer validation:
+  - tmux session: `wan22_adaptive_mini_dit_split_20260630_025328`
+  - result root: `/hy-tmp/wan22_adaptive_seacache_mini_dit_split_compare_50step_45f_480p_20260630_025328`
+  - runner: `experiments/adaptive_seacache_mini_dit_split_compare_50step_45f_480p/run_batch.py`
+  - protocol: `24` candidates = `2` splits (`sample_split`, `row_split`) * `2`
+    target PSNRs (`22`, `28`) * `2` datasets (`VBench10`, `OpenVid100 train`)
+    * `3` prompts.
+  - It reuses existing no-cache baselines and loads the WanT2V pipeline once.
+- Added online inference support for the 5-feature gated MLP checkpoint:
+  - `adaptive_seacache_wan22/cache.py`
+    - added `mlp_gated` auto-detection for checkpoints with `fusion.*` state keys.
+    - added online five-feature extraction:
+      `latent_pool`, `temporal_mean`, `temporal_var`,
+      `frame_diff_mean`, `frame_diff_var`.
+    - loads `feature_sets`, `hidden_dim`, `feature_embedding_dim`,
+      `psnr_min/max`, and `min/max_threshold` from checkpoint/config metadata.
+  - `adaptive_seacache_wan22/generate_t2v.py`
+    - added `mlp_gated` to `--adaptive_model_type` choices.
+- Validation:
+  - `py_compile` passed for `adaptive_seacache_wan22/cache.py`,
+    `adaptive_seacache_wan22/generate_t2v.py`, and
+    `adaptive_threshold_predictor/models.py`.
+  - Loaded
+    `/hy-tmp/wan22_adaptive_threshold_mlp_gated_5feature_range_samplesplit_20260630_035000/best_model_checkpoint.pt`
+    with `model_type=auto`; it resolved to `mlp_gated`, feature sets matched
+    the five-feature list, hidden dim and feature embedding dim were both `64`,
+    range was `[0.1, 0.8]`, and a random-latent forward prediction succeeded
+    inside that range.
+  - CPU validation of the online runner with 5-feature checkpoints found the
+    expected `24` candidates and reusable baselines.
+- Added launch helper:
+  - `experiments/adaptive_seacache_mlp_gated_5feature_split_compare_50step_45f_480p/run_tmux.sh`
+- Queued the 5-feature online validation behind the currently running
+  Transformer validation to avoid competing for the single A100:
+  - tmux session: `wan22_adaptive_mlp_gated5_split_20260630_050727`
+  - result root:
+    `/hy-tmp/wan22_adaptive_seacache_mlp_gated_5feature_range_split_compare_50step_45f_480p_20260630_050727`
+  - symlink:
+    `experiment_results/wan22_adaptive_seacache_mlp_gated_5feature_range_split_compare_50step_45f_480p_20260630_050727`
+  - queued command waits for tmux session
+    `wan22_adaptive_mini_dit_split_20260630_025328` to exit, then runs the same
+    24-candidate protocol with:
+    - sample split checkpoint:
+      `/hy-tmp/wan22_adaptive_threshold_mlp_gated_5feature_range_samplesplit_20260630_035000/best_model_checkpoint.pt`
+    - row split checkpoint:
+      `/hy-tmp/wan22_adaptive_threshold_mlp_gated_5feature_range_rowsplit_gpu_long100_20260630_035000/best_model_checkpoint.pt`
+    - sample split JSON:
+      `/hy-tmp/wan22_adaptive_threshold_mlp_gated_5feature_range_samplesplit_20260630_035000/split.json`
+    - `--adaptive_min_threshold 0.10`
+    - `--adaptive_max_threshold 0.80`
+- At queue launch time, the Transformer run had `22` completed summary rows and
+  was running `openvid100_train_openvid_005_row_split_target_22`, candidate
+  `23/24`.
+- Monitor:
+  - Transformer log:
+    `/hy-tmp/wan22_adaptive_seacache_mini_dit_split_compare_50step_45f_480p_20260630_025328/logs/runner.log`
+  - 5-feature log after it starts:
+    `/hy-tmp/wan22_adaptive_seacache_mlp_gated_5feature_range_split_compare_50step_45f_480p_20260630_050727/logs/runner.log`
+- Session log: `logs/session_20260630_gated_mlp_online_validation_queue.md`.
+- No commit was made.
+
+Completion update:
+
+- The queued 5-feature gated MLP online validation completed successfully.
+- Final status:
+  - tmux session exited.
+  - `summary.csv` has `24` completed candidate rows.
+  - `failed/` is empty.
+  - runner log ends with:
+    `Completed experiment: /hy-tmp/wan22_adaptive_seacache_mlp_gated_5feature_range_split_compare_50step_45f_480p_20260630_050727`
+- Result files:
+  - summary:
+    `/hy-tmp/wan22_adaptive_seacache_mlp_gated_5feature_range_split_compare_50step_45f_480p_20260630_050727/results/summary.csv`
+  - aggregate:
+    `/hy-tmp/wan22_adaptive_seacache_mlp_gated_5feature_range_split_compare_50step_45f_480p_20260630_050727/results/aggregate_by_dataset_model_target.csv`
+- 5-feature aggregate results:
+
+| Dataset | Split | Target | Completed | Overall Speedup | Mean PSNR | Target Error | Mean Reuse Decisions | Mean Threshold |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| OpenVid train | row | 22 | 3 | `2.523x` | `21.970` | `-0.030` | `64.7` | `0.488` |
+| OpenVid train | row | 28 | 3 | `1.773x` | `26.095` | `-1.905` | `46.0` | `0.279` |
+| OpenVid train | sample | 22 | 3 | `2.559x` | `22.858` | `+0.858` | `65.3` | `0.495` |
+| OpenVid train | sample | 28 | 3 | `1.718x` | `27.365` | `-0.635` | `44.0` | `0.291` |
+| VBench10 | row | 22 | 3 | `2.065x` | `20.810` | `-1.190` | `54.7` | `0.353` |
+| VBench10 | row | 28 | 3 | `1.627x` | `24.484` | `-3.516` | `40.0` | `0.201` |
+| VBench10 | sample | 22 | 3 | `2.229x` | `17.159` | `-4.841` | `58.7` | `0.358` |
+| VBench10 | sample | 28 | 3 | `1.539x` | `25.460` | `-2.540` | `36.0` | `0.184` |
+
+- Same-protocol comparison against MiniDiT aggregate:
+
+| Dataset | Split | Target | 5-feature Speedup | MiniDiT Speedup | Speed Delta | 5-feature PSNR | MiniDiT PSNR | PSNR Delta |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| OpenVid train | row | 22 | `2.523x` | `2.447x` | `+0.077x` | `21.970` | `23.007` | `-1.037` |
+| OpenVid train | row | 28 | `1.773x` | `1.633x` | `+0.140x` | `26.095` | `27.710` | `-1.614` |
+| OpenVid train | sample | 22 | `2.559x` | `2.598x` | `-0.039x` | `22.858` | `22.151` | `+0.706` |
+| OpenVid train | sample | 28 | `1.718x` | `1.794x` | `-0.076x` | `27.365` | `29.019` | `-1.654` |
+| VBench10 | row | 22 | `2.065x` | `2.068x` | `-0.003x` | `20.810` | `20.466` | `+0.344` |
+| VBench10 | row | 28 | `1.627x` | `1.539x` | `+0.088x` | `24.484` | `25.469` | `-0.984` |
+| VBench10 | sample | 22 | `2.229x` | `2.113x` | `+0.116x` | `17.159` | `16.737` | `+0.422` |
+| VBench10 | sample | 28 | `1.539x` | `1.582x` | `-0.043x` | `25.460` | `23.796` | `+1.664` |
+
+- Immediate read:
+  - The 5-feature gated MLP is not uniformly worse online despite weaker
+    offline MAE.
+  - On OpenVid target 28, MiniDiT has clearly higher PSNR.
+  - On VBench10 sample split target 28, 5-feature MLP has higher PSNR than
+    MiniDiT in this 3-prompt pilot.
+  - Both predictors miss VBench target 22 badly under sample split, indicating
+    the online target-control problem remains unresolved.
+- Note: after completion, `nvidia-smi` returned `No devices were found`, so the
+  GPU appears to have been disabled or detached after the run. This was not
+  changed by the agent.
+
+## 2026-06-30 MiniDiT Split Compare Progress Check
+
+- Checked the running MiniDiT row-split vs sample-split online validation requested for adaptive SeaCache.
+- Current tmux sessions:
+  - `wan22_adaptive_mini_dit_split_20260630_025328` is still running.
+  - `wan22_adaptive_mlp_gated5_split_20260630_050727` is queued and waiting for the MiniDiT session to exit before starting.
+- MiniDiT result root:
+  `/hy-tmp/wan22_adaptive_seacache_mini_dit_split_compare_50step_45f_480p_20260630_025328`
+- Status at 2026-06-30 05:15 CST:
+  - `results/summary.csv` has `23/24` completed rows.
+  - `failed/` is empty.
+  - GPU is active on `NVIDIA A100 80GB PCIe`, about `47317/81920 MiB` used, `100%` utilization.
+  - Last running candidate:
+    `openvid100_train_openvid_005_row_split_target_28`.
+  - tmux pane showed this last candidate at `17/50` sampling steps.
+- Current aggregate at 23 rows:
+  - `vbench10/sample_split/target22`: speedup `2.113x`, mean PSNR `16.737`, target error `-5.263`.
+  - `vbench10/sample_split/target28`: speedup `1.582x`, mean PSNR `23.796`, target error `-4.204`.
+  - `vbench10/row_split/target22`: speedup `2.068x`, mean PSNR `20.466`, target error `-1.534`.
+  - `vbench10/row_split/target28`: speedup `1.539x`, mean PSNR `25.469`, target error `-2.531`.
+  - `openvid100_train/sample_split/target22`: speedup `2.598x`, mean PSNR `22.151`, target error `+0.151`.
+  - `openvid100_train/sample_split/target28`: speedup `1.794x`, mean PSNR `29.019`, target error `+1.019`.
+  - `openvid100_train/row_split/target22`: speedup `2.447x`, mean PSNR `23.007`, target error `+1.007`.
+  - `openvid100_train/row_split/target28`: currently `2/3` rows complete, speedup `1.801x`, mean PSNR `28.556`, target error `+0.556`.
+- No code changes were made during this check.
+- Session log: `logs/session_20260630_mini_dit_split_compare_progress_check.md`.
+
+## 2026-06-30 MiniDiT Split Compare Completed
+
+- Rechecked MiniDiT row-split vs sample-split online validation.
+- Completed `24/24` candidates with `0` failures.
+- Result root:
+  `/hy-tmp/wan22_adaptive_seacache_mini_dit_split_compare_50step_45f_480p_20260630_025328`
+- Final result tables:
+  - summary:
+    `/hy-tmp/wan22_adaptive_seacache_mini_dit_split_compare_50step_45f_480p_20260630_025328/results/summary.csv`
+  - aggregate:
+    `/hy-tmp/wan22_adaptive_seacache_mini_dit_split_compare_50step_45f_480p_20260630_025328/results/aggregate_by_dataset_model_target.csv`
+- Final aggregate:
+  - `vbench10/sample_split/target22`: speedup `2.113x`, mean PSNR `16.737`, target error `-5.263`, mean threshold `0.359`.
+  - `vbench10/sample_split/target28`: speedup `1.582x`, mean PSNR `23.796`, target error `-4.204`, mean threshold `0.211`.
+  - `vbench10/row_split/target22`: speedup `2.068x`, mean PSNR `20.466`, target error `-1.534`, mean threshold `0.329`.
+  - `vbench10/row_split/target28`: speedup `1.539x`, mean PSNR `25.469`, target error `-2.531`, mean threshold `0.178`.
+  - `openvid100_train/sample_split/target22`: speedup `2.598x`, mean PSNR `22.151`, target error `+0.151`, mean threshold `0.487`.
+  - `openvid100_train/sample_split/target28`: speedup `1.794x`, mean PSNR `29.019`, target error `+1.019`, mean threshold `0.252`.
+  - `openvid100_train/row_split/target22`: speedup `2.447x`, mean PSNR `23.007`, target error `+1.007`, mean threshold `0.484`.
+  - `openvid100_train/row_split/target28`: speedup `1.633x`, mean PSNR `27.710`, target error `-0.290`, mean threshold `0.232`.
+- Split comparison:
+  - On VBench10, row split is closer to target than sample split for both targets:
+    absolute target error improves by `3.729 dB` at target 22 and `1.673 dB` at target 28, with about `0.04x` lower speedup.
+  - On OpenVid train, sample split is closer at target 22, while row split is closer at target 28. Row split is slower by about `0.15x-0.16x`.
+  - Both MiniDiT splits still undershoot VBench10 target PSNR; row split undershoots less.
+- The queued 5-feature gated MLP validation started after MiniDiT completed:
+  - tmux session: `wan22_adaptive_mlp_gated5_split_20260630_050727`
+  - result root:
+    `/hy-tmp/wan22_adaptive_seacache_mlp_gated_5feature_range_split_compare_50step_45f_480p_20260630_050727`
+  - current check showed `1/24` completed, `0` failures, and it was running `vbench10_vbench10_001_sample_split_target_28`.
+- No code changes were made during this check.
+- Session log: `logs/session_20260630_mini_dit_split_compare_completed.md`.
+
+## 2026-06-30 MiniDiT Row-Split vs Fixed SeaCache VBench10 Comparison
+
+- Compared MiniDiT adaptive SeaCache row-split results on the tested VBench10 prompts
+  (`vbench10_001`, `vbench10_002`, `vbench10_003`) against normal fixed-threshold
+  SeaCache dpm++ results for the same prompts.
+- Sources:
+  - MiniDiT row-split summary:
+    `/hy-tmp/wan22_adaptive_seacache_mini_dit_split_compare_50step_45f_480p_20260630_025328/results/summary.csv`
+  - fixed SeaCache summary:
+    `/hy-tmp/wan22_vbench10_three_cache_full_merge_and_timestep_only_full_20260623/timestep_only_seacache_vbench10_full/wan22_seacache_vbench10_50step_45f_480p_20260618_161845/merged/summary.csv`
+- Three-prompt fixed SeaCache aggregate:
+  - threshold `0.10`: speedup `1.109x`, mean PSNR `35.623`
+  - threshold `0.15`: speedup `1.410x`, mean PSNR `27.728`
+  - threshold `0.20`: speedup `1.575x`, mean PSNR `24.272`
+  - threshold `0.25`: speedup `1.844x`, mean PSNR `23.614`
+  - threshold `0.30`: speedup `1.979x`, mean PSNR `22.218`
+  - threshold `0.40`: speedup `2.425x`, mean PSNR `17.364`
+  - threshold `0.50`: speedup `2.753x`, mean PSNR `17.350`
+  - threshold `0.60`: speedup `3.125x`, mean PSNR `16.618`
+  - threshold `0.70`: speedup `3.386x`, mean PSNR `16.756`
+  - threshold `0.80`: speedup `3.534x`, mean PSNR `16.539`
+- Aggregate target comparison on the same three prompts:
+  - target 22:
+    - MiniDiT row split: speedup `2.068x`, mean PSNR `20.466`, target error `-1.534`
+    - best fixed SeaCache by mean PSNR closeness: threshold `0.30`, speedup `1.979x`, mean PSNR `22.218`, target error `+0.218`
+    - MiniDiT is `+0.089x` faster but `1.752 dB` lower in mean PSNR.
+  - target 28:
+    - MiniDiT row split: speedup `1.539x`, mean PSNR `25.469`, target error `-2.531`
+    - best fixed SeaCache by mean PSNR closeness: threshold `0.15`, speedup `1.410x`, mean PSNR `27.728`, target error `-0.272`
+    - MiniDiT is `+0.129x` faster but `2.259 dB` lower in mean PSNR.
+- Takeaway: on these VBench10 prompts, MiniDiT row split does not beat fixed
+  SeaCache when selecting a fixed threshold by target PSNR closeness. It is a bit
+  faster than the closest fixed-threshold points, but its target PSNR undershoot
+  is materially worse.
+- Session log: `logs/session_20260630_mini_dit_vs_fixed_seacache_vbench10.md`.
+
+## 2026-06-30 MiniDiT Transformer Predictor Comprehensive Report
+
+- Wrote a comprehensive report for the Transformer-style adaptive threshold predictor:
+  `reports/report_mini_dit_transformer_predictor_comprehensive_20260630.md`.
+- The report includes:
+  - existing architecture diagram:
+    `reports/assets/mini_dit_cls_predictor_architecture.svg`
+  - architecture parameter settings and module parameter counts.
+  - sample-split and row-split training settings.
+  - offline training metrics and train/validation loss curves.
+  - online inference protocol and per-prompt plus aggregate results for the
+    24-candidate VBench10/OpenVid train run.
+- Added generated loss curve asset:
+  `reports/assets/mini_dit_cls_training_loss_curves.svg`.
+- Notes captured in the report:
+  - row split has much lower offline validation MAE but is not a strict sample-level generalization test.
+  - online VBench10 row split is better calibrated than sample split, but still undershoots target PSNR.
+  - online predictor timing fields were not populated in this runner, so online performance is reported with compute elapsed/speedup rather than predictor overhead.
+- Validation:
+  - `git diff --check` passed for the new report, loss curve asset, progress update, and session log.
+- Session log: `logs/session_20260630_mini_dit_transformer_predictor_report.md`.
+
+## 2026-06-30 5-Feature Gated MLP Predictor Comprehensive Report
+
+- User requested a comprehensive 5-feature gated MLP predictor report modeled
+  after `reports/report_mini_dit_transformer_predictor_comprehensive_20260630.md`.
+- Wrote:
+  - `reports/report_gated_multifeature_mlp_predictor_comprehensive_20260630.md`
+- Added generated loss-curve asset:
+  - `reports/assets/gated_multifeature_mlp_training_loss_curves.svg`
+- The report includes:
+  - existing architecture diagram:
+    `reports/assets/gated_multifeature_mlp_architecture.svg`
+  - architecture flow, module settings, feature definitions, and parameter
+    count (`83,526` trainable parameters).
+  - training parameters for:
+    - sample split 30-epoch budget,
+    - row split 30-epoch budget,
+    - row split 100-epoch budget.
+  - offline training metrics, last-epoch metrics, and mean gate weights.
+  - train/test Smooth L1 loss curves, with train/test overlaid per run and
+    separate subplots for sample 30, row 30, and row 100.
+  - explicit row-split 30-epoch vs 100-epoch comparison:
+    - row split 30 run best test MAE: `0.077050`
+    - row split 100 epoch-30 test MAE: `0.074371`
+    - row split 100 best test MAE: `0.061031` at epoch `98`
+    - 100-epoch best improves over independent row-30 best by about `20.8%`.
+  - online inference settings and real T2V results from:
+    `/hy-tmp/wan22_adaptive_seacache_mlp_gated_5feature_range_split_compare_50step_45f_480p_20260630_050727`
+  - per-prompt and aggregate online results for VBench10 and OpenVid100 train.
+  - same-protocol comparison against the MiniDiT online result aggregate.
+- Main report takeaways:
+  - 5-feature gated MLP is much smaller than MiniDiT (`83,526` vs `724,513`
+    params).
+  - row split offline metrics are much better than sample split but are not a
+    held-out-sample generalization test.
+  - longer row-split training matters; sample split early-stops instead.
+  - online results are mixed rather than uniformly worse than MiniDiT.
+  - target control remains weak on VBench10, supporting the earlier conclusion
+    that the `candidate_inverse` training target and online adaptive control are
+    still mismatched.
+- Validation:
+  - generated report and SVG exist.
+  - `git diff --check` passed for the report and loss curve asset before the
+    progress/session-log update.
+- Session log: `logs/session_20260630_gated_mlp_predictor_comprehensive_report.md`.
+- No commit was made.
+
+Follow-up comparison-report split:
+
+- User requested moving `9. Same-Protocol MiniDiT Comparison` out of the
+  5-feature comprehensive report into a dedicated comparison report.
+- Updated:
+  - `reports/report_gated_multifeature_mlp_predictor_comprehensive_20260630.md`
+    - removed the old same-protocol MiniDiT comparison section.
+    - renumbered `Findings` and `Artifacts`.
+    - kept the 5-feature report focused on the 5-feature architecture, training,
+      loss curves, and online results.
+    - artifact table now points to the dedicated comparison report.
+- Added:
+  - `reports/report_adaptive_predictor_mini_dit_vs_gated_mlp_comparison_20260630.md`
+- Dedicated comparison report includes:
+  - method summary for MiniDiT and 5-feature gated MLP.
+  - training loss data table for both methods:
+    - MiniDiT sample split 30.
+    - MiniDiT row split 30.
+    - 5-feature MLP sample split 30.
+    - 5-feature MLP row split 30.
+    - 5-feature MLP row split 100.
+  - online-checkpoint training comparison table.
+  - training loss figures for both methods:
+    - `reports/assets/mini_dit_cls_training_loss_curves.svg`
+    - `reports/assets/gated_multifeature_mlp_training_loss_curves.svg`
+  - same online inference protocol table.
+  - aggregate online comparison table with speed/PSNR/target-error/threshold
+    deltas.
+  - per-prompt online comparison table.
+  - findings and artifact paths.
+- No new experiments were run.
+- Session log:
+  `logs/session_20260630_predictor_comparison_report_split.md`.
+- No commit was made.
+
+## 2026-06-30 Transformer vs 5-Feature Predictor Result Readout
+
+- Read and cross-checked:
+  - `reports/report_mini_dit_transformer_predictor_comprehensive_20260630.md`
+  - `reports/report_gated_multifeature_mlp_predictor_comprehensive_20260630.md`
+  - `reports/report_adaptive_predictor_mini_dit_vs_gated_mlp_comparison_20260630.md`
+  - MiniDiT online summary:
+    `/hy-tmp/wan22_adaptive_seacache_mini_dit_split_compare_50step_45f_480p_20260630_025328/results/summary.csv`
+  - 5-feature online summary:
+    `/hy-tmp/wan22_adaptive_seacache_mlp_gated_5feature_range_split_compare_50step_45f_480p_20260630_050727/results/summary.csv`
+- Recomputed lightweight online aggregates with Python standard-library CSV
+  parsing.
+- Key readout:
+  - MiniDiT is clearly stronger offline on row split (`0.038002` MAE vs
+    5-feature row-100 `0.061031` MAE), while sample split is essentially tied
+    (`0.114459` vs `0.114357` MAE).
+  - Online, neither model has reliable target-quality control. Across the 24
+    candidates, both hit the requested PSNR target in only `8/24` cases.
+  - MiniDiT online average: speedup `2.010x`, PSNR `23.544 dB`, mean target
+    error `-1.456 dB`, mean absolute target error `3.148 dB`.
+  - 5-feature online average: speedup `2.065x`, PSNR `23.275 dB`, mean target
+    error `-1.725 dB`, mean absolute target error `2.813 dB`.
+  - MiniDiT tends to preserve higher PSNR on OpenVid target-28 cells; 5-feature
+    MLP is slightly faster on average and has lower aggregate absolute target
+    error, but no consistent dominance.
+  - VBench10 target control remains poor for both, especially target 22 under
+    sample split; this reinforces that the `candidate_inverse` offline task is
+    not well aligned with online adaptive control.
+- No code or experiment runner changes were made.
+- Session log:
+  `logs/session_20260630_transformer_vs_5feature_readout.md`.
+- No commit was made.
+
+## 2026-06-30 Row Split vs Sample Split Readout
+
+- Compared row split and sample split results for both current adaptive
+  threshold predictors.
+- Main readout:
+  - Row split is much easier offline because train/test share source-video
+    identities; it measures same-video interpolation rather than held-out-video
+    generalization.
+  - MiniDiT row split improves dramatically over sample split (`0.038002` vs
+    `0.114459` MAE), showing the raw-latent Transformer can learn strong
+    within-video structure.
+  - 5-feature gated MLP also improves under row split, but less strongly
+    (`0.061031` row-100 vs `0.114357` sample MAE), suggesting pooled features
+    lose some information needed for fine same-video interpolation.
+  - Online, row split is not consistently better than sample split; this
+    confirms that row-split offline MAE should not be used as the primary model
+    selection metric for deployed adaptive inference.
+  - Sample split remains the more relevant offline proxy for generalization,
+    but even sample split does not fully predict online target-PSNR control.
+- Session log:
+  `logs/session_20260630_row_vs_sample_split_readout.md`.
+- No commit was made.
+
+## 2026-07-01 Commit Checkpoint
+
+- User requested committing the current workspace state.
+- Reviewed `git status`, `git diff --stat`, untracked experiment script sizes,
+  and `experiment_results/` symlink targets before committing.
+- Confirmed new `experiment_results/` entries are symlinks to `/hy-tmp/...`
+  archive roots rather than large video/model files.
+- Added this progress note and session log:
+  `logs/session_20260701_commit_checkpoint.md`.
+- Planned verification before commit:
+  - `git diff --check`
+  - `python -m py_compile` on modified/new Python modules and experiment
+    runners.

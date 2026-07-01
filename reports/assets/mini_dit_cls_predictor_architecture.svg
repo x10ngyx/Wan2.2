@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1380" height="920" viewBox="0 0 1380 920">
+  <defs>
+    <style>
+text { font-family: Arial, Helvetica, sans-serif; fill: #172033; }
+.title { font-size: 30px; font-weight: 700; }
+.subtitle { font-size: 15px; fill: #526078; }
+.box-title { font-size: 17px; font-weight: 700; }
+.shape { font-size: 14px; font-weight: 700; fill: #26364f; }
+.detail { font-size: 12px; fill: #526078; }
+.tiny { font-size: 11px; fill: #526078; }
+.input { fill: #eef6ff; stroke: #2f73b8; }
+.feature { fill: #edf9f1; stroke: #2c8b57; }
+.cond { fill: #fff7e8; stroke: #b97813; }
+.fusion { fill: #f2efff; stroke: #6a55b8; }
+.output { fill: #fff0f0; stroke: #bd3b3b; }
+.block { fill: #f8fbff; stroke: #65758d; }
+.arrow { stroke: #34445f; stroke-width: 2.0; fill: none; marker-end: url(#arrowhead); }
+.thin { stroke-width: 1.4; }
+.dash { stroke-dasharray: 7 5; }
+.control { stroke: #b97813; stroke-width: 1.8; stroke-dasharray: 7 5; fill: none; marker-end: url(#gatehead); }
+</style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#34445f"/>
+    </marker>
+    <marker id="gatehead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#b97813"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="1380" height="920" fill="#ffffff"/>
+<text x="48" y="52" class="title">MiniDiT-CLS Adaptive Threshold Predictor</text>
+<text x="48" y="80" class="subtitle">Raw latent Conv3d patch tokens, learned factorized 3D position, AdaLN-conditioned Transformer blocks.</text>
+<rect x="54" y="148" rx="8" ry="8" width="250" height="96" class="input" stroke-width="2"/>
+<text x="70" y="176" class="box-title">latent input</text>
+<text x="70" y="202" class="shape">[B,16,12,60,104]</text>
+<text x="70" y="224" class="detail">Wan2.2 T2V latent trace</text>
+<rect x="374" y="148" rx="8" ry="8" width="284" height="96" class="feature" stroke-width="2"/>
+<text x="390" y="176" class="box-title">Conv3d patch embedding</text>
+<text x="390" y="202" class="shape">kernel=stride=(3,12,8)</text>
+<text x="390" y="224" class="detail">16 -&gt; 96, grid [4,5,13]</text>
+<rect x="728" y="148" rx="8" ry="8" width="250" height="96" class="feature" stroke-width="2"/>
+<text x="744" y="176" class="box-title">latent tokens</text>
+<text x="744" y="202" class="shape">[B,260,96]</text>
+<text x="744" y="224" class="detail">flatten order: T, H, W</text>
+<rect x="1048" y="148" rx="8" ry="8" width="270" height="96" class="feature" stroke-width="2"/>
+<text x="1064" y="176" class="box-title">prepend CLS + add pos</text>
+<text x="1064" y="202" class="shape">[B,261,96]</text>
+<text x="1064" y="224" class="detail">cls_pos + pos_t + pos_h + pos_w</text>
+<path d="M304 196 H374" class="arrow"/>
+<path d="M658 196 H728" class="arrow"/>
+<path d="M978 196 H1048" class="arrow"/>
+<rect x="54" y="384" rx="8" ry="8" width="250" height="92" class="cond" stroke-width="2"/>
+<text x="70" y="412" class="box-title">condition inputs</text>
+<text x="70" y="438" class="shape">step_fraction</text>
+<text x="70" y="460" class="detail">target_psnr_norm</text>
+<rect x="374" y="384" rx="8" ry="8" width="284" height="92" class="cond" stroke-width="2"/>
+<text x="390" y="412" class="box-title">condition MLP</text>
+<text x="390" y="438" class="shape">[B,2] -&gt; [B,96]</text>
+<text x="390" y="460" class="detail">SiLU MLP</text>
+<path d="M304 430 H374" class="arrow"/>
+<rect x="728" y="354" rx="8" ry="8" width="590" height="176" class="block" stroke-width="2"/>
+<text x="744" y="382" class="box-title">2 x conditioned Transformer blocks</text>
+<text x="744" y="408" class="shape">AdaLN modulation: Linear(96 -&gt; 6*96)</text>
+<text x="744" y="430" class="detail">shift/scale/gate for attention and MLP</text>
+<text x="762" y="452" class="tiny">x = x + gate_attn * SelfAttention(LN(x) * (1 + scale_attn) + shift_attn)</text>
+<text x="762" y="478" class="tiny">x = x + gate_mlp  * MLP(          LN(x) * (1 + scale_mlp)  + shift_mlp)</text>
+<path d="M658 430 H728" class="arrow thin"/>
+<path d="M1183 244 V354" class="arrow"/>
+<rect x="1048" y="612" rx="8" ry="8" width="270" height="96" class="fusion" stroke-width="2"/>
+<text x="1064" y="640" class="box-title">CLS readout head</text>
+<text x="1064" y="666" class="shape">LayerNorm, Linear, SiLU</text>
+<text x="1064" y="688" class="detail">Dropout, Linear</text>
+<rect x="1048" y="780" rx="8" ry="8" width="270" height="86" class="output" stroke-width="2"/>
+<text x="1064" y="808" class="box-title">predicted threshold</text>
+<text x="1064" y="834" class="shape">0.10 + sigmoid(raw) * 0.70</text>
+<text x="1064" y="856" class="detail">range: [0.10,0.80]</text>
+<path d="M1183 530 V612" class="arrow"/>
+<path d="M1183 708 V780" class="arrow"/>
+</svg>

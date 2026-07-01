@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -31,6 +32,12 @@ def parse_args() -> argparse.Namespace:
         help="Target PSNR conditioning value passed to the adaptive threshold predictor.",
     )
     parser.add_argument(
+        "--adaptive_model_type",
+        choices=("auto", "mlp", "mlp_gated", "mini_dit_cls"),
+        default="auto",
+        help="Adaptive predictor architecture. 'auto' inspects checkpoint metadata.",
+    )
+    parser.add_argument(
         "--adaptive_feature_set",
         choices=("temporal_mean", "latent_pool"),
         default="temporal_mean",
@@ -55,6 +62,26 @@ def parse_args() -> argparse.Namespace:
         default=(2, 2, 2),
         help="Pooled feature grid size used by the trained predictor.",
     )
+    parser.add_argument(
+        "--adaptive_dit_input_shape",
+        nargs=4,
+        type=int,
+        default=None,
+        help="MiniDiT latent input shape C T H W. Defaults to checkpoint metadata.",
+    )
+    parser.add_argument(
+        "--adaptive_dit_patch_size",
+        nargs=3,
+        type=int,
+        default=None,
+        help="MiniDiT Conv3d patch size T H W. Defaults to checkpoint metadata.",
+    )
+    parser.add_argument("--adaptive_dit_dim", type=int, default=96)
+    parser.add_argument("--adaptive_dit_layers", type=int, default=2)
+    parser.add_argument("--adaptive_dit_heads", type=int, default=4)
+    parser.add_argument("--adaptive_dit_mlp_ratio", type=float, default=2.0)
+    parser.add_argument("--adaptive_dit_dropout", type=float, default=0.05)
+    parser.add_argument("--adaptive_dit_gate_init", type=float, default=0.0)
     parser.add_argument(
         "--adaptive_psnr_min",
         type=float,
@@ -112,10 +139,27 @@ def main() -> None:
     gate_config = AdaptiveSeaCacheGateConfig(
         model_path=args.adaptive_gate_model,
         target_psnr=args.target_psnr,
+        model_type=args.adaptive_model_type,
         feature_set=args.adaptive_feature_set,
         hidden_dim=args.adaptive_hidden_dim,
         feature_dim=args.adaptive_feature_dim,
         grid_size=tuple(args.adaptive_grid_size),
+        dit_input_shape=(
+            tuple(args.adaptive_dit_input_shape)
+            if args.adaptive_dit_input_shape is not None
+            else None
+        ),
+        dit_patch_size=(
+            tuple(args.adaptive_dit_patch_size)
+            if args.adaptive_dit_patch_size is not None
+            else None
+        ),
+        dit_dim=args.adaptive_dit_dim,
+        dit_layers=args.adaptive_dit_layers,
+        dit_heads=args.adaptive_dit_heads,
+        dit_mlp_ratio=args.adaptive_dit_mlp_ratio,
+        dit_dropout=args.adaptive_dit_dropout,
+        dit_gate_init=args.adaptive_dit_gate_init,
         psnr_min=args.adaptive_psnr_min,
         psnr_max=args.adaptive_psnr_max,
         min_threshold=args.adaptive_min_threshold,
@@ -124,6 +168,7 @@ def main() -> None:
     )
     patch_wan_model_forward_for_adaptive_seacache()
     wan_text2video.SeaCacheTimestepCache = build_adaptive_seacache_factory(gate_config)
+    logging.getLogger().handlers.clear()
     wan_generate.generate(args)
 
 

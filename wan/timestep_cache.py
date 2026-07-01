@@ -321,6 +321,13 @@ class SeaCacheTimestepCache:
         force_recompute: bool = False,
     ) -> Tuple[bool, Optional[torch.Tensor]]:
         state = self.states.setdefault(key, SeaCacheTimestepCacheState())
+        ret_steps, cutoff_steps = self._ret_cutoff_steps(num_steps)
+        if (force_recompute or step_index < ret_steps or step_index >= cutoff_steps or
+                state.previous_feature is None or state.previous_residual is None):
+            state.accumulated_rel_l1_distance = 0.0
+            state.previous_feature = feature.detach().clone()
+            return False, None
+
         filtered_feature = self._filter_feature(
             feature,
             grid_size,
@@ -328,10 +335,9 @@ class SeaCacheTimestepCache:
             num_steps,
             scheduler_sigmas,
         )
-        should_recompute = force_recompute or self._should_recompute(
+        should_recompute = self._should_recompute(
             state,
             step_index,
-            num_steps,
             filtered_feature,
         )
         state.previous_feature = filtered_feature.detach().clone()
@@ -369,15 +375,8 @@ class SeaCacheTimestepCache:
         self,
         state: SeaCacheTimestepCacheState,
         step_index: int,
-        num_steps: int,
         filtered_feature: torch.Tensor,
     ) -> bool:
-        ret_steps, cutoff_steps = self._ret_cutoff_steps(num_steps)
-        if (step_index < ret_steps or step_index >= cutoff_steps or
-                state.previous_feature is None or state.previous_residual is None):
-            state.accumulated_rel_l1_distance = 0.0
-            return True
-
         rel_l1 = self._relative_l1(filtered_feature, state.previous_feature)
         state.accumulated_rel_l1_distance += rel_l1
         state.rel_l1_path.append((step_index, rel_l1))

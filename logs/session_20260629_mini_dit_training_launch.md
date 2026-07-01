@@ -1,0 +1,46 @@
+# 2026-06-29 MiniDiT Convpatch Training Launch
+
+- User asked to start MiniDiT Conv3d patch predictor training in tmux and to watch raw latent loading speed.
+- Checked GPU and tmux:
+  - GPU was available and idle: A100 80GB.
+  - No tmux server was running before launch.
+  - `/hy-tmp` had about `68G` free.
+- Ran raw latent loading checks:
+  - Initial `num_workers=4/8` tests showed repeated PyTorch `torch.load` FutureWarnings for each trace load.
+  - Stopped the first tmux launch before epoch output because the warning flood was slowing training and polluting logs.
+  - Updated `adaptive_threshold_predictor/data.py` and `inspect_trace_data.py` to use `torch.load(..., weights_only=True)` where trace/cache payloads are loaded.
+  - Rechecked loading with `num_workers=8`: 512 examples took about `8.833s` in the short cold-cache/worker-startup test.
+- Ran GPU smoke with `batch_size=128`; it passed.
+- Launched full run:
+  - tmux session: `wan22_mini_dit_convpatch_train_20260629_214906`
+  - result root: `/hy-tmp/wan22_adaptive_threshold_mini_dit_cls_convpatch_3x12x8_d96_l2_bs128_20260629_214906`
+  - symlink: `experiment_results/wan22_adaptive_threshold_mini_dit_cls_convpatch_3x12x8_d96_l2_bs128_20260629_214906`
+  - launch script: `/hy-tmp/wan22_adaptive_threshold_mini_dit_cls_convpatch_3x12x8_d96_l2_bs128_20260629_214906/commands/launch_train.sh`
+  - log: `/hy-tmp/wan22_adaptive_threshold_mini_dit_cls_convpatch_3x12x8_d96_l2_bs128_20260629_214906/logs/train.log`
+- Training command uses:
+  - `--model_type mini_dit_cls`
+  - `--dataset_mode candidate_inverse`
+  - `--batch_size 128`
+  - `--epochs 30`
+  - `--lr 3e-4`
+  - `--min_lr 1e-5`
+  - `--warmup_steps 500`
+  - `--smooth_l1_beta 0.02`
+  - `--grad_clip 1.0`
+  - `--early_stop_patience 5`
+  - `--dit_dim 96`
+  - `--dit_layers 2`
+  - `--dit_heads 4`
+  - `--dit_patch_size 3 12 8`
+  - `--num_workers 8`
+  - `--save_val_predictions`
+  - `--save_epoch_val_predictions`
+- First epoch completed:
+  - elapsed `200.632s`
+  - train loss `0.1223346`, train MAE `0.1319188`
+  - val loss `0.1085956`, val MAE `0.1181465`
+  - val prediction min/max/mean/std: `0.1064772 / 0.7293686 / 0.4027086 / 0.1986593`
+- Latest status:
+  - tmux session still running.
+  - epoch 1 is recorded in `epoch_metrics.jsonl`.
+  - `best_model.pt`, `best_model_checkpoint.pt`, and `val_predictions_epoch_001.csv` exist.

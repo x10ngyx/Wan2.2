@@ -31,7 +31,7 @@ def main() -> None:
         / args.sample_id
         / f"step_{args.step_index:03d}.pt"
     )
-    payload = torch.load(step_path, map_location="cpu")
+    payload = torch.load(step_path, map_location="cpu", weights_only=True)
     latent = payload["latent"]
     print(f"step_path: {step_path}")
     print(f"latent shape: {tuple(latent.shape)} dtype={latent.dtype}")
