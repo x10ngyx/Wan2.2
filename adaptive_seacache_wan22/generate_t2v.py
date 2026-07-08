@@ -32,6 +32,12 @@ def parse_args() -> argparse.Namespace:
         help="Target PSNR conditioning value passed to the adaptive threshold predictor.",
     )
     parser.add_argument(
+        "--target_speedup",
+        type=float,
+        default=None,
+        help="Target speedup conditioning value passed to the adaptive threshold predictor.",
+    )
+    parser.add_argument(
         "--adaptive_model_type",
         choices=("auto", "mlp", "mlp_gated", "mini_dit_cls"),
         default="auto",
@@ -95,6 +101,18 @@ def parse_args() -> argparse.Namespace:
         help="Maximum PSNR normalization value used during predictor training.",
     )
     parser.add_argument(
+        "--adaptive_speedup_min",
+        type=float,
+        default=1.0,
+        help="Minimum speedup normalization value used during predictor training.",
+    )
+    parser.add_argument(
+        "--adaptive_speedup_max",
+        type=float,
+        default=4.0,
+        help="Maximum speedup normalization value used during predictor training.",
+    )
+    parser.add_argument(
         "--adaptive_min_threshold",
         type=float,
         default=0.0,
@@ -121,6 +139,8 @@ def parse_args() -> argparse.Namespace:
         raise ValueError("--adaptive_gate_model is required.")
     if args.target_psnr is None:
         raise ValueError("--target_psnr is required.")
+    if args.target_speedup is None:
+        raise ValueError("--target_speedup is required.")
     return args
 
 
@@ -139,6 +159,7 @@ def main() -> None:
     gate_config = AdaptiveSeaCacheGateConfig(
         model_path=args.adaptive_gate_model,
         target_psnr=args.target_psnr,
+        target_speedup=args.target_speedup,
         model_type=args.adaptive_model_type,
         feature_set=args.adaptive_feature_set,
         hidden_dim=args.adaptive_hidden_dim,
@@ -162,6 +183,8 @@ def main() -> None:
         dit_gate_init=args.adaptive_dit_gate_init,
         psnr_min=args.adaptive_psnr_min,
         psnr_max=args.adaptive_psnr_max,
+        speedup_min=args.adaptive_speedup_min,
+        speedup_max=args.adaptive_speedup_max,
         min_threshold=args.adaptive_min_threshold,
         max_threshold=args.adaptive_max_threshold,
         device=device,

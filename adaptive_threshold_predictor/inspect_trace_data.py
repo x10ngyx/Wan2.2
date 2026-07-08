@@ -18,6 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample_id", default="openvidhd_part1_000")
     parser.add_argument("--step_index", type=int, default=0)
     parser.add_argument("--target_psnr", type=float, default=30.0)
+    parser.add_argument("--target_speedup", type=float, default=2.0)
     return parser.parse_args()
 
 
@@ -45,6 +46,7 @@ def main() -> None:
             latent,
             torch.tensor([args.step_index / max(payload["num_steps"] - 1, 1)], dtype=torch.float32),
             torch.tensor([args.target_psnr], dtype=torch.float32),
+            torch.tensor([args.target_speedup], dtype=torch.float32),
         )
     print(f"model parameters: {count_parameters(model)}")
     print(f"predicted threshold shape: {tuple(pred.shape)}")

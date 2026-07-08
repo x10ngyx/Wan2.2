@@ -14,7 +14,6 @@ from torch.utils.data import DataLoader, Subset
 
 from adaptive_threshold_predictor.data import (
     CachedFeatureThresholdDataset,
-    DATASET_MODES,
     DEFAULT_DATA_ROOT,
     GridFeatureThresholdDataset,
     PackedRawLatentThresholdDataset,
@@ -70,7 +69,6 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("/hy-tmp/wan22_adaptive_threshold_predictor_debug"),
     )
-    parser.add_argument("--dataset_mode", choices=DATASET_MODES, default="candidate_inverse")
     parser.add_argument("--model_type", choices=MODEL_TYPES, default="mlp")
 
     # Legacy MLP arguments.
@@ -94,8 +92,18 @@ def parse_args() -> argparse.Namespace:
         default="feature",
         help=(
             "feature: use the selected latent-derived feature; "
-            "condition_only: use only timestep and PSNR; "
+            "condition_only: use only timestep, PSNR, and speedup; "
             "noise_feature: keep the feature trunk but replace features with random noise"
+        ),
+    )
+    parser.add_argument(
+        "--condition_inputs",
+        nargs="+",
+        choices=("timestep", "target_psnr", "target_speedup"),
+        default=("timestep", "target_psnr", "target_speedup"),
+        help=(
+            "Condition-only input ablation. Defaults to timestep, PSNR, and speedup; "
+            "use 'timestep target_speedup' to remove target PSNR."
         ),
     )
     parser.add_argument("--noise_seed", type=int, default=1234)
@@ -116,6 +124,8 @@ def parse_args() -> argparse.Namespace:
     # Shared training arguments.
     parser.add_argument("--psnr_min", type=float, default=10.0)
     parser.add_argument("--psnr_max", type=float, default=50.0)
+    parser.add_argument("--speedup_min", type=float, default=1.0)
+    parser.add_argument("--speedup_max", type=float, default=4.0)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--max_examples", type=int, default=None)
@@ -148,7 +158,6 @@ def load_dataset(args: argparse.Namespace) -> tuple[Any, Any, str]:
             return dataset, collate_trace_steps, "packed_raw_latent"
         dataset = TraceStepThresholdDataset(
             data_root=args.data_root,
-            dataset_mode=args.dataset_mode,
             max_examples=args.max_examples,
         )
         return dataset, collate_trace_steps, "raw_latent"
@@ -174,7 +183,6 @@ def load_dataset(args: argparse.Namespace) -> tuple[Any, Any, str]:
 
     dataset = TraceStepThresholdDataset(
         data_root=args.data_root,
-        dataset_mode=args.dataset_mode,
         max_examples=args.max_examples,
     )
     return dataset, collate_trace_steps, "raw_latent"
@@ -189,6 +197,8 @@ def build_model(args: argparse.Namespace, dataset: Any, input_mode: str) -> nn.M
             depth=args.grid_mlp_depth,
             psnr_min=args.psnr_min,
             psnr_max=args.psnr_max,
+            speedup_min=args.speedup_min,
+            speedup_max=args.speedup_max,
             min_threshold=args.min_threshold,
             max_threshold=args.max_threshold,
             dropout=args.dit_dropout,
@@ -203,6 +213,8 @@ def build_model(args: argparse.Namespace, dataset: Any, input_mode: str) -> nn.M
             mlp_ratio=args.dit_mlp_ratio,
             psnr_min=args.psnr_min,
             psnr_max=args.psnr_max,
+            speedup_min=args.speedup_min,
+            speedup_max=args.speedup_max,
             min_threshold=args.min_threshold,
             max_threshold=args.max_threshold,
             dropout=args.dit_dropout,
@@ -214,8 +226,11 @@ def build_model(args: argparse.Namespace, dataset: Any, input_mode: str) -> nn.M
             hidden_dim=args.hidden_dim,
             psnr_min=args.psnr_min,
             psnr_max=args.psnr_max,
+            speedup_min=args.speedup_min,
+            speedup_max=args.speedup_max,
             min_threshold=args.min_threshold,
             max_threshold=args.max_threshold,
+            condition_inputs=tuple(args.condition_inputs),
         ).to(args.device)
     if input_mode == "cached_feature":
         if use_gated_features(args):
@@ -225,6 +240,8 @@ def build_model(args: argparse.Namespace, dataset: Any, input_mode: str) -> nn.M
                 feature_embedding_dim=feature_embedding_dim(args),
                 psnr_min=args.psnr_min,
                 psnr_max=args.psnr_max,
+                speedup_min=args.speedup_min,
+                speedup_max=args.speedup_max,
                 min_threshold=args.min_threshold,
                 max_threshold=args.max_threshold,
                 dropout=args.dit_dropout,
@@ -235,6 +252,8 @@ def build_model(args: argparse.Namespace, dataset: Any, input_mode: str) -> nn.M
             hidden_dim=args.hidden_dim,
             psnr_min=args.psnr_min,
             psnr_max=args.psnr_max,
+            speedup_min=args.speedup_min,
+            speedup_max=args.speedup_max,
             min_threshold=args.min_threshold,
             max_threshold=args.max_threshold,
         ).to(args.device)
@@ -248,6 +267,8 @@ def build_model(args: argparse.Namespace, dataset: Any, input_mode: str) -> nn.M
             feature_sets=selected_feature_sets(args),
             psnr_min=args.psnr_min,
             psnr_max=args.psnr_max,
+            speedup_min=args.speedup_min,
+            speedup_max=args.speedup_max,
             min_threshold=args.min_threshold,
             max_threshold=args.max_threshold,
             dropout=args.dit_dropout,
@@ -258,6 +279,8 @@ def build_model(args: argparse.Namespace, dataset: Any, input_mode: str) -> nn.M
         feature_set=args.feature_set,
         psnr_min=args.psnr_min,
         psnr_max=args.psnr_max,
+        speedup_min=args.speedup_min,
+        speedup_max=args.speedup_max,
         min_threshold=args.min_threshold,
         max_threshold=args.max_threshold,
     ).to(args.device)
@@ -346,18 +369,25 @@ def predict_batch(
 ) -> torch.Tensor:
     timestep = batch["timestep"].to(args.device)
     target_psnr = batch["target_psnr"].to(args.device)
+    target_speedup = batch["target_speedup"].to(args.device)
     label = batch["threshold"].to(args.device)
 
     if args.model_type == "mini_dit_cls":
         model_input = batch["latent"].to(args.device)
-        return model(model_input, timestep, target_psnr)
+        return model(model_input, timestep, target_psnr, target_speedup)
 
     if args.model_type == "grid_mlp":
         model_input = batch["grid_feature"].to(args.device)
-        return model(model_input, timestep, target_psnr)
+        return model(model_input, timestep, target_psnr, target_speedup)
 
     if args.control_mode == "condition_only":
-        return model(timestep, target_psnr, batch=label.shape[0], device=label.device)
+        return model(
+            timestep,
+            target_psnr,
+            target_speedup,
+            batch=label.shape[0],
+            device=label.device,
+        )
 
     if use_gated_features(args) and input_mode == "cached_feature":
         features = {
@@ -374,7 +404,7 @@ def predict_batch(
                 )
                 for name, feature in features.items()
             }
-        return model(features, timestep, target_psnr)
+        return model(features, timestep, target_psnr, target_speedup)
 
     model_input = batch["feature" if input_mode == "cached_feature" else "latent"].to(args.device)
     if args.control_mode == "noise_feature":
@@ -384,7 +414,7 @@ def predict_batch(
             device=model_input.device,
             dtype=model_input.dtype,
         )
-    return model(model_input, timestep, target_psnr)
+    return model(model_input, timestep, target_psnr, target_speedup)
 
 
 def bucket_name(kind: str, value: float) -> str:
@@ -399,6 +429,8 @@ def bucket_name(kind: str, value: float) -> str:
         return f"threshold_{value:.2f}"
     if kind == "target_psnr":
         return f"target_{round(value):02d}"
+    if kind == "target_speedup":
+        return f"speedup_{value:.1f}x"
     raise ValueError(f"Unknown bucket kind: {kind}")
 
 
@@ -410,6 +442,7 @@ def summarize_predictions(
     labels: list[float],
     timesteps: list[float],
     target_psnrs: list[float],
+    target_speedups: list[float],
 ) -> dict[str, Any]:
     errors = [abs(pred - label) for pred, label in zip(preds, labels)]
     signed = [pred - label for pred, label in zip(preds, labels)]
@@ -443,6 +476,7 @@ def summarize_predictions(
         "by_step_range": grouped("step", timesteps),
         "by_threshold": grouped("threshold", labels),
         "by_target_psnr": grouped("target_psnr", target_psnrs),
+        "by_target_speedup": grouped("target_speedup", target_speedups),
     }
 
 
@@ -462,6 +496,7 @@ def run_eval(
     labels: list[float] = []
     timesteps: list[float] = []
     target_psnrs: list[float] = []
+    target_speedups: list[float] = []
     with torch.no_grad():
         for batch in loader:
             label = batch["threshold"].to(args.device)
@@ -478,6 +513,7 @@ def run_eval(
             labels.extend(label.detach().cpu().flatten().tolist())
             timesteps.extend(batch["timestep"].flatten().tolist())
             target_psnrs.extend(batch["target_psnr"].flatten().tolist())
+            target_speedups.extend(batch["target_speedup"].flatten().tolist())
     return summarize_predictions(
         loss_sum=loss_sum,
         count=count,
@@ -485,6 +521,7 @@ def run_eval(
         labels=labels,
         timesteps=timesteps,
         target_psnrs=target_psnrs,
+        target_speedups=target_speedups,
     )
 
 
@@ -564,6 +601,7 @@ def save_predictions_csv(
                 "timestep",
                 "step_index_estimate",
                 "target_psnr",
+                "target_speedup",
             ]
             + gate_fieldnames,
         )
@@ -572,6 +610,7 @@ def save_predictions_csv(
             for batch in loader:
                 timestep = batch["timestep"].to(args.device)
                 target_psnr = batch["target_psnr"].to(args.device)
+                target_speedup = batch["target_speedup"].to(args.device)
                 label = batch["threshold"].to(args.device)
                 pred = predict_batch(
                     model=model,
@@ -586,12 +625,13 @@ def save_predictions_csv(
                     if gate_weights is not None and gate_feature_names
                     else [None] * len(batch["sample_id"])
                 )
-                for sample_id, pred_i, label_i, step_i, psnr_i, gate_i in zip(
+                for sample_id, pred_i, label_i, step_i, psnr_i, speedup_i, gate_i in zip(
                     batch["sample_id"],
                     pred.cpu().flatten().tolist(),
                     label.cpu().flatten().tolist(),
                     timestep.cpu().flatten().tolist(),
                     target_psnr.cpu().flatten().tolist(),
+                    target_speedup.cpu().flatten().tolist(),
                     gate_rows,
                 ):
                     row = {
@@ -603,6 +643,7 @@ def save_predictions_csv(
                         "timestep": step_i,
                         "step_index_estimate": int(round(step_i * 49)),
                         "target_psnr": psnr_i,
+                        "target_speedup": speedup_i,
                     }
                     if gate_i is not None:
                         row.update({
@@ -697,7 +738,6 @@ def main() -> None:
         "validation_empty": len(val_indices) == 0,
         "split": args.split_mode,
         "split_seed": args.split_seed,
-        "dataset_mode": args.dataset_mode,
         "input_mode": input_mode,
         "cache_dir": str(args.cache_dir) if args.cache_dir is not None else None,
         "grid_cache_dir": str(args.grid_cache_dir) if args.grid_cache_dir is not None else None,
@@ -714,9 +754,12 @@ def main() -> None:
         "feature_fusion": "gated" if use_gated_features(args) else "single",
         "feature_embedding_dim": feature_embedding_dim(args),
         "control_mode": args.control_mode,
+        "condition_inputs": list(args.condition_inputs),
         "noise_seed": args.noise_seed,
         "psnr_min": args.psnr_min,
         "psnr_max": args.psnr_max,
+        "speedup_min": args.speedup_min,
+        "speedup_max": args.speedup_max,
         "min_threshold": args.min_threshold,
         "max_threshold": args.max_threshold,
         "batch_size": args.batch_size,
@@ -736,6 +779,7 @@ def main() -> None:
                 "model": repr(model),
                 "parameters": metrics["parameters"],
                 "input_mode": input_mode,
+                "condition_inputs": list(args.condition_inputs),
             },
             handle,
             indent=2,
@@ -760,6 +804,7 @@ def main() -> None:
         train_labels: list[float] = []
         train_timesteps: list[float] = []
         train_target_psnrs: list[float] = []
+        train_target_speedups: list[float] = []
 
         for batch in train_loader:
             label = batch["threshold"].to(args.device)
@@ -785,6 +830,7 @@ def main() -> None:
             train_labels.extend(label.detach().cpu().flatten().tolist())
             train_timesteps.extend(batch["timestep"].flatten().tolist())
             train_target_psnrs.extend(batch["target_psnr"].flatten().tolist())
+            train_target_speedups.extend(batch["target_speedup"].flatten().tolist())
 
         train_summary = summarize_predictions(
             loss_sum=train_loss_sum,
@@ -793,6 +839,7 @@ def main() -> None:
             labels=train_labels,
             timesteps=train_timesteps,
             target_psnrs=train_target_psnrs,
+            target_speedups=train_target_speedups,
         )
         val_summary = run_eval(
             model=model,
@@ -817,6 +864,7 @@ def main() -> None:
             "train_by_step_range": train_summary["by_step_range"],
             "train_by_threshold": train_summary["by_threshold"],
             "train_by_target_psnr": train_summary["by_target_psnr"],
+            "train_by_target_speedup": train_summary["by_target_speedup"],
             "val_loss": val_summary["loss"],
             "val_mae": val_summary["mae"],
             "val_bias": val_summary["bias"],
@@ -827,6 +875,7 @@ def main() -> None:
             "val_by_step_range": val_summary["by_step_range"],
             "val_by_threshold": val_summary["by_threshold"],
             "val_by_target_psnr": val_summary["by_target_psnr"],
+            "val_by_target_speedup": val_summary["by_target_speedup"],
         }
         metrics["epochs"].append(epoch_metrics)
         with epoch_jsonl.open("a") as handle:

@@ -52,12 +52,14 @@ class ImprovedAdaCacheGate(nn.Module):
         latent: Either [B, C, T, H, W] or a single trace tensor [C, T, H, W].
         t: Normalized or raw timestep tensor, shape [B], [B, 1], or scalar.
         target_psnr: Normalized or raw target PSNR tensor, shape [B], [B, 1], or scalar.
+        target_speedup: Normalized or raw target speedup tensor, shape [B], [B, 1],
+            or scalar.
 
     Output:
         One threshold in [0, 1] for the current timestep-cache experiment,
         shape [B, 1].
 
-    The condition path always receives timestep and target PSNR. The feature
+    The condition path always receives timestep, target PSNR, and target speedup. The feature
     path is selected by ``feature_set``. Multi-feature runs use
     ``GatedMultiFeatureAdaCacheGate`` instead of direct feature concatenation.
     """
@@ -70,6 +72,8 @@ class ImprovedAdaCacheGate(nn.Module):
         normalize_inputs: bool = True,
         psnr_min: float = 10.0,
         psnr_max: float = 50.0,
+        speedup_min: float = 1.0,
+        speedup_max: float = 4.0,
         min_threshold: float = 0.10,
         max_threshold: float = 0.80,
         dropout: float = 0.0,
@@ -86,6 +90,8 @@ class ImprovedAdaCacheGate(nn.Module):
         self.normalize_inputs = normalize_inputs
         self.psnr_min = psnr_min
         self.psnr_max = psnr_max
+        self.speedup_min = speedup_min
+        self.speedup_max = speedup_max
         self.min_threshold = min_threshold
         self.max_threshold = max_threshold
         self.feature_set = feature_set
@@ -101,7 +107,7 @@ class ImprovedAdaCacheGate(nn.Module):
         )
 
         self.cond_embed = nn.Sequential(
-            nn.Linear(2, hidden_dim),
+            nn.Linear(3, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
@@ -122,6 +128,7 @@ class ImprovedAdaCacheGate(nn.Module):
         latent: torch.Tensor,
         t: torch.Tensor | float,
         target_psnr: torch.Tensor | float,
+        target_speedup: torch.Tensor | float,
     ) -> torch.Tensor:
         latent = self._normalize_latent_rank(latent)
         batch, channels, frames, _, _ = latent.shape
@@ -135,7 +142,7 @@ class ImprovedAdaCacheGate(nn.Module):
             self._extract_feature(latent, frames, self.feature_set)
         )
         feat_cond = self.cond_embed(
-            self._prepare_condition(t, target_psnr, batch, latent.device)
+            self._prepare_condition(t, target_psnr, target_speedup, batch, latent.device)
         )
         fused = torch.cat([feat_latent, feat_cond], dim=-1)
         return _threshold_from_unit(
@@ -194,6 +201,7 @@ class ImprovedAdaCacheGate(nn.Module):
         self,
         t: torch.Tensor | float,
         target_psnr: torch.Tensor | float,
+        target_speedup: torch.Tensor | float,
         batch: int,
         device: torch.device,
     ) -> torch.Tensor:
@@ -201,15 +209,25 @@ class ImprovedAdaCacheGate(nn.Module):
         psnr_tensor = torch.as_tensor(
             target_psnr, dtype=torch.float32, device=device
         ).reshape(-1, 1)
+        speedup_tensor = torch.as_tensor(
+            target_speedup, dtype=torch.float32, device=device
+        ).reshape(-1, 1)
 
         if t_tensor.shape[0] == 1 and batch > 1:
             t_tensor = t_tensor.expand(batch, 1)
         if psnr_tensor.shape[0] == 1 and batch > 1:
             psnr_tensor = psnr_tensor.expand(batch, 1)
-        if t_tensor.shape[0] != batch or psnr_tensor.shape[0] != batch:
+        if speedup_tensor.shape[0] == 1 and batch > 1:
+            speedup_tensor = speedup_tensor.expand(batch, 1)
+        if (
+            t_tensor.shape[0] != batch
+            or psnr_tensor.shape[0] != batch
+            or speedup_tensor.shape[0] != batch
+        ):
             raise ValueError(
                 "Condition batch size mismatch: "
-                f"latent batch={batch}, t={t_tensor.shape[0]}, psnr={psnr_tensor.shape[0]}"
+                f"latent batch={batch}, t={t_tensor.shape[0]}, "
+                f"psnr={psnr_tensor.shape[0]}, speedup={speedup_tensor.shape[0]}"
             )
 
         if self.normalize_inputs:
@@ -217,8 +235,12 @@ class ImprovedAdaCacheGate(nn.Module):
             psnr_tensor = (
                 (psnr_tensor - self.psnr_min) / (self.psnr_max - self.psnr_min)
             ).clamp(0.0, 1.0)
+            speedup_tensor = (
+                (speedup_tensor - self.speedup_min)
+                / (self.speedup_max - self.speedup_min)
+            ).clamp(0.0, 1.0)
 
-        return torch.cat([t_tensor, psnr_tensor], dim=-1)
+        return torch.cat([t_tensor, psnr_tensor, speedup_tensor], dim=-1)
 
 
 class CachedFeatureAdaCacheGate(nn.Module):
@@ -231,6 +253,8 @@ class CachedFeatureAdaCacheGate(nn.Module):
         normalize_inputs: bool = True,
         psnr_min: float = 10.0,
         psnr_max: float = 50.0,
+        speedup_min: float = 1.0,
+        speedup_max: float = 4.0,
         min_threshold: float = 0.10,
         max_threshold: float = 0.80,
         dropout: float = 0.0,
@@ -239,6 +263,8 @@ class CachedFeatureAdaCacheGate(nn.Module):
         self.normalize_inputs = normalize_inputs
         self.psnr_min = psnr_min
         self.psnr_max = psnr_max
+        self.speedup_min = speedup_min
+        self.speedup_max = speedup_max
         self.min_threshold = min_threshold
         self.max_threshold = max_threshold
         self.feature_proj = nn.Sequential(
@@ -248,7 +274,7 @@ class CachedFeatureAdaCacheGate(nn.Module):
             nn.SiLU(),
         )
         self.cond_embed = nn.Sequential(
-            nn.Linear(2, hidden_dim),
+            nn.Linear(3, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
@@ -268,12 +294,13 @@ class CachedFeatureAdaCacheGate(nn.Module):
         feature: torch.Tensor,
         t: torch.Tensor | float,
         target_psnr: torch.Tensor | float,
+        target_speedup: torch.Tensor | float,
     ) -> torch.Tensor:
         feature = feature.float()
         batch = feature.shape[0]
         feat_latent = self.feature_proj(feature)
         feat_cond = self.cond_embed(
-            self._prepare_condition(t, target_psnr, batch, feature.device)
+            self._prepare_condition(t, target_psnr, target_speedup, batch, feature.device)
         )
         return _threshold_from_unit(
             torch.sigmoid(self.predict_head(torch.cat([feat_latent, feat_cond], dim=-1))),
@@ -285,6 +312,7 @@ class CachedFeatureAdaCacheGate(nn.Module):
         self,
         t: torch.Tensor | float,
         target_psnr: torch.Tensor | float,
+        target_speedup: torch.Tensor | float,
         batch: int,
         device: torch.device,
     ) -> torch.Tensor:
@@ -292,16 +320,25 @@ class CachedFeatureAdaCacheGate(nn.Module):
         psnr_tensor = torch.as_tensor(
             target_psnr, dtype=torch.float32, device=device
         ).reshape(-1, 1)
+        speedup_tensor = torch.as_tensor(
+            target_speedup, dtype=torch.float32, device=device
+        ).reshape(-1, 1)
         if t_tensor.shape[0] == 1 and batch > 1:
             t_tensor = t_tensor.expand(batch, 1)
         if psnr_tensor.shape[0] == 1 and batch > 1:
             psnr_tensor = psnr_tensor.expand(batch, 1)
+        if speedup_tensor.shape[0] == 1 and batch > 1:
+            speedup_tensor = speedup_tensor.expand(batch, 1)
         if self.normalize_inputs:
             t_tensor = t_tensor.clamp(0.0, 1.0)
             psnr_tensor = (
                 (psnr_tensor - self.psnr_min) / (self.psnr_max - self.psnr_min)
             ).clamp(0.0, 1.0)
-        return torch.cat([t_tensor, psnr_tensor], dim=-1)
+            speedup_tensor = (
+                (speedup_tensor - self.speedup_min)
+                / (self.speedup_max - self.speedup_min)
+            ).clamp(0.0, 1.0)
+        return torch.cat([t_tensor, psnr_tensor, speedup_tensor], dim=-1)
 
 
 class GatedFeatureFusionAdaCacheGate(nn.Module):
@@ -315,6 +352,8 @@ class GatedFeatureFusionAdaCacheGate(nn.Module):
         normalize_inputs: bool = True,
         psnr_min: float = 10.0,
         psnr_max: float = 50.0,
+        speedup_min: float = 1.0,
+        speedup_max: float = 4.0,
         min_threshold: float = 0.10,
         max_threshold: float = 0.80,
         dropout: float = 0.0,
@@ -329,6 +368,8 @@ class GatedFeatureFusionAdaCacheGate(nn.Module):
         self.normalize_inputs = normalize_inputs
         self.psnr_min = psnr_min
         self.psnr_max = psnr_max
+        self.speedup_min = speedup_min
+        self.speedup_max = speedup_max
         self.min_threshold = min_threshold
         self.max_threshold = max_threshold
         self.feature_encoders = nn.ModuleDict({
@@ -342,7 +383,7 @@ class GatedFeatureFusionAdaCacheGate(nn.Module):
             for name in self.feature_sets
         })
         self.cond_embed = nn.Sequential(
-            nn.Linear(2, hidden_dim),
+            nn.Linear(3, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
@@ -368,6 +409,7 @@ class GatedFeatureFusionAdaCacheGate(nn.Module):
         features: dict[str, torch.Tensor],
         t: torch.Tensor | float,
         target_psnr: torch.Tensor | float,
+        target_speedup: torch.Tensor | float,
     ) -> torch.Tensor:
         first = features[self.feature_sets[0]]
         batch = first.shape[0]
@@ -390,7 +432,9 @@ class GatedFeatureFusionAdaCacheGate(nn.Module):
             encoded_features.append(self.feature_encoders[name](flat))
 
         encoded = torch.stack(encoded_features, dim=1)
-        cond = self.cond_embed(self._prepare_condition(t, target_psnr, batch, device))
+        cond = self.cond_embed(
+            self._prepare_condition(t, target_psnr, target_speedup, batch, device)
+        )
         gate = torch.softmax(self.gate_head(cond), dim=-1)
         self.last_gate_weights = gate.detach()
         fused_feature = (encoded * gate.unsqueeze(-1)).sum(dim=1)
@@ -404,6 +448,7 @@ class GatedFeatureFusionAdaCacheGate(nn.Module):
         self,
         t: torch.Tensor | float,
         target_psnr: torch.Tensor | float,
+        target_speedup: torch.Tensor | float,
         batch: int,
         device: torch.device,
     ) -> torch.Tensor:
@@ -411,21 +456,35 @@ class GatedFeatureFusionAdaCacheGate(nn.Module):
         psnr_tensor = torch.as_tensor(
             target_psnr, dtype=torch.float32, device=device
         ).reshape(-1, 1)
+        speedup_tensor = torch.as_tensor(
+            target_speedup, dtype=torch.float32, device=device
+        ).reshape(-1, 1)
         if t_tensor.shape[0] == 1 and batch > 1:
             t_tensor = t_tensor.expand(batch, 1)
         if psnr_tensor.shape[0] == 1 and batch > 1:
             psnr_tensor = psnr_tensor.expand(batch, 1)
-        if t_tensor.shape[0] != batch or psnr_tensor.shape[0] != batch:
+        if speedup_tensor.shape[0] == 1 and batch > 1:
+            speedup_tensor = speedup_tensor.expand(batch, 1)
+        if (
+            t_tensor.shape[0] != batch
+            or psnr_tensor.shape[0] != batch
+            or speedup_tensor.shape[0] != batch
+        ):
             raise ValueError(
                 "Condition batch size mismatch: "
-                f"feature batch={batch}, t={t_tensor.shape[0]}, psnr={psnr_tensor.shape[0]}"
+                f"feature batch={batch}, t={t_tensor.shape[0]}, "
+                f"psnr={psnr_tensor.shape[0]}, speedup={speedup_tensor.shape[0]}"
             )
         if self.normalize_inputs:
             t_tensor = t_tensor.clamp(0.0, 1.0)
             psnr_tensor = (
                 (psnr_tensor - self.psnr_min) / (self.psnr_max - self.psnr_min)
             ).clamp(0.0, 1.0)
-        return torch.cat([t_tensor, psnr_tensor], dim=-1)
+            speedup_tensor = (
+                (speedup_tensor - self.speedup_min)
+                / (self.speedup_max - self.speedup_min)
+            ).clamp(0.0, 1.0)
+        return torch.cat([t_tensor, psnr_tensor, speedup_tensor], dim=-1)
 
 
 class CachedGatedFeatureAdaCacheGate(nn.Module):
@@ -439,6 +498,8 @@ class CachedGatedFeatureAdaCacheGate(nn.Module):
         normalize_inputs: bool = True,
         psnr_min: float = 10.0,
         psnr_max: float = 50.0,
+        speedup_min: float = 1.0,
+        speedup_max: float = 4.0,
         min_threshold: float = 0.10,
         max_threshold: float = 0.80,
         dropout: float = 0.0,
@@ -451,6 +512,8 @@ class CachedGatedFeatureAdaCacheGate(nn.Module):
             normalize_inputs=normalize_inputs,
             psnr_min=psnr_min,
             psnr_max=psnr_max,
+            speedup_min=speedup_min,
+            speedup_max=speedup_max,
             min_threshold=min_threshold,
             max_threshold=max_threshold,
             dropout=dropout,
@@ -463,8 +526,9 @@ class CachedGatedFeatureAdaCacheGate(nn.Module):
         features: dict[str, torch.Tensor],
         t: torch.Tensor | float,
         target_psnr: torch.Tensor | float,
+        target_speedup: torch.Tensor | float,
     ) -> torch.Tensor:
-        return self.fusion(features, t, target_psnr)
+        return self.fusion(features, t, target_psnr, target_speedup)
 
 
 class GatedMultiFeatureAdaCacheGate(nn.Module):
@@ -479,6 +543,8 @@ class GatedMultiFeatureAdaCacheGate(nn.Module):
         normalize_inputs: bool = True,
         psnr_min: float = 10.0,
         psnr_max: float = 50.0,
+        speedup_min: float = 1.0,
+        speedup_max: float = 4.0,
         min_threshold: float = 0.10,
         max_threshold: float = 0.80,
         dropout: float = 0.0,
@@ -499,6 +565,8 @@ class GatedMultiFeatureAdaCacheGate(nn.Module):
             normalize_inputs=normalize_inputs,
             psnr_min=psnr_min,
             psnr_max=psnr_max,
+            speedup_min=speedup_min,
+            speedup_max=speedup_max,
             min_threshold=min_threshold,
             max_threshold=max_threshold,
             dropout=dropout,
@@ -509,6 +577,7 @@ class GatedMultiFeatureAdaCacheGate(nn.Module):
         latent: torch.Tensor,
         t: torch.Tensor | float,
         target_psnr: torch.Tensor | float,
+        target_speedup: torch.Tensor | float,
     ) -> torch.Tensor:
         latent = ImprovedAdaCacheGate._normalize_latent_rank(latent)
         _, channels, frames, _, _ = latent.shape
@@ -521,7 +590,7 @@ class GatedMultiFeatureAdaCacheGate(nn.Module):
             name: self._extract_feature(latent, frames, name)
             for name in self.feature_sets
         }
-        return self.fusion(features, t, target_psnr)
+        return self.fusion(features, t, target_psnr, target_speedup)
 
     def _extract_feature(
         self,
@@ -553,7 +622,7 @@ class GatedMultiFeatureAdaCacheGate(nn.Module):
 
 
 class ConditionOnlyAdaCacheGate(nn.Module):
-    """Threshold predictor using only timestep and target PSNR."""
+    """Threshold predictor using only selected conditioning signals."""
 
     def __init__(
         self,
@@ -561,18 +630,30 @@ class ConditionOnlyAdaCacheGate(nn.Module):
         normalize_inputs: bool = True,
         psnr_min: float = 10.0,
         psnr_max: float = 50.0,
+        speedup_min: float = 1.0,
+        speedup_max: float = 4.0,
         min_threshold: float = 0.10,
         max_threshold: float = 0.80,
         dropout: float = 0.0,
+        condition_inputs: Sequence[str] = ("timestep", "target_psnr", "target_speedup"),
     ) -> None:
         super().__init__()
+        valid_inputs = {"timestep", "target_psnr", "target_speedup"}
+        unknown = set(condition_inputs) - valid_inputs
+        if unknown:
+            raise ValueError(f"Unknown condition inputs: {sorted(unknown)}")
+        if "timestep" not in condition_inputs:
+            raise ValueError("condition_inputs must include timestep")
+        self.condition_inputs = tuple(condition_inputs)
         self.normalize_inputs = normalize_inputs
         self.psnr_min = psnr_min
         self.psnr_max = psnr_max
+        self.speedup_min = speedup_min
+        self.speedup_max = speedup_max
         self.min_threshold = min_threshold
         self.max_threshold = max_threshold
         self.cond_embed = nn.Sequential(
-            nn.Linear(2, hidden_dim),
+            nn.Linear(len(self.condition_inputs), hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
@@ -591,12 +672,13 @@ class ConditionOnlyAdaCacheGate(nn.Module):
         self,
         t: torch.Tensor | float,
         target_psnr: torch.Tensor | float,
+        target_speedup: torch.Tensor | float,
         batch: int | None = None,
         device: torch.device | None = None,
     ) -> torch.Tensor:
         if device is None:
             device = next(self.parameters()).device
-        cond = self._prepare_condition(t, target_psnr, batch, device)
+        cond = self._prepare_condition(t, target_psnr, target_speedup, batch, device)
         return _threshold_from_unit(
             torch.sigmoid(self.predict_head(self.cond_embed(cond))),
             self.min_threshold,
@@ -607,6 +689,7 @@ class ConditionOnlyAdaCacheGate(nn.Module):
         self,
         t: torch.Tensor | float,
         target_psnr: torch.Tensor | float,
+        target_speedup: torch.Tensor | float,
         batch: int | None,
         device: torch.device,
     ) -> torch.Tensor:
@@ -614,23 +697,42 @@ class ConditionOnlyAdaCacheGate(nn.Module):
         psnr_tensor = torch.as_tensor(
             target_psnr, dtype=torch.float32, device=device
         ).reshape(-1, 1)
+        speedup_tensor = torch.as_tensor(
+            target_speedup, dtype=torch.float32, device=device
+        ).reshape(-1, 1)
         if batch is None:
-            batch = max(t_tensor.shape[0], psnr_tensor.shape[0])
+            batch = max(t_tensor.shape[0], psnr_tensor.shape[0], speedup_tensor.shape[0])
         if t_tensor.shape[0] == 1 and batch > 1:
             t_tensor = t_tensor.expand(batch, 1)
         if psnr_tensor.shape[0] == 1 and batch > 1:
             psnr_tensor = psnr_tensor.expand(batch, 1)
-        if t_tensor.shape[0] != batch or psnr_tensor.shape[0] != batch:
+        if speedup_tensor.shape[0] == 1 and batch > 1:
+            speedup_tensor = speedup_tensor.expand(batch, 1)
+        if (
+            t_tensor.shape[0] != batch
+            or psnr_tensor.shape[0] != batch
+            or speedup_tensor.shape[0] != batch
+        ):
             raise ValueError(
                 "Condition batch size mismatch: "
-                f"batch={batch}, t={t_tensor.shape[0]}, psnr={psnr_tensor.shape[0]}"
+                f"batch={batch}, t={t_tensor.shape[0]}, "
+                f"psnr={psnr_tensor.shape[0]}, speedup={speedup_tensor.shape[0]}"
             )
         if self.normalize_inputs:
             t_tensor = t_tensor.clamp(0.0, 1.0)
             psnr_tensor = (
                 (psnr_tensor - self.psnr_min) / (self.psnr_max - self.psnr_min)
             ).clamp(0.0, 1.0)
-        return torch.cat([t_tensor, psnr_tensor], dim=-1)
+            speedup_tensor = (
+                (speedup_tensor - self.speedup_min)
+                / (self.speedup_max - self.speedup_min)
+            ).clamp(0.0, 1.0)
+        tensors = {
+            "timestep": t_tensor,
+            "target_psnr": psnr_tensor,
+            "target_speedup": speedup_tensor,
+        }
+        return torch.cat([tensors[name] for name in self.condition_inputs], dim=-1)
 
 
 def count_parameters(model: nn.Module) -> int:
@@ -653,6 +755,8 @@ class GridMLPThresholdPredictor(nn.Module):
         normalize_inputs: bool = True,
         psnr_min: float = 10.0,
         psnr_max: float = 50.0,
+        speedup_min: float = 1.0,
+        speedup_max: float = 4.0,
         min_threshold: float = 0.10,
         max_threshold: float = 0.80,
         dropout: float = 0.05,
@@ -664,10 +768,12 @@ class GridMLPThresholdPredictor(nn.Module):
         self.normalize_inputs = normalize_inputs
         self.psnr_min = psnr_min
         self.psnr_max = psnr_max
+        self.speedup_min = speedup_min
+        self.speedup_max = speedup_max
         self.min_threshold = min_threshold
         self.max_threshold = max_threshold
 
-        input_dim = int(torch.tensor(grid_shape).prod().item()) + 2
+        input_dim = int(torch.tensor(grid_shape).prod().item()) + 3
         layers: list[nn.Module] = []
         current_dim = input_dim
         for _ in range(depth):
@@ -686,6 +792,7 @@ class GridMLPThresholdPredictor(nn.Module):
         grid_feature: torch.Tensor,
         t: torch.Tensor | float,
         target_psnr: torch.Tensor | float,
+        target_speedup: torch.Tensor | float,
     ) -> torch.Tensor:
         grid_feature = self._normalize_grid_rank(grid_feature).float()
         batch = grid_feature.shape[0]
@@ -694,7 +801,9 @@ class GridMLPThresholdPredictor(nn.Module):
                 f"Expected grid feature shape {self.grid_shape}, "
                 f"got {tuple(grid_feature.shape[1:])}"
             )
-        cond = self._prepare_condition(t, target_psnr, batch, grid_feature.device)
+        cond = self._prepare_condition(
+            t, target_psnr, target_speedup, batch, grid_feature.device
+        )
         raw = self.net(torch.cat([grid_feature.flatten(start_dim=1), cond], dim=-1))
         return _threshold_from_unit(
             torch.sigmoid(raw),
@@ -717,6 +826,7 @@ class GridMLPThresholdPredictor(nn.Module):
         self,
         t: torch.Tensor | float,
         target_psnr: torch.Tensor | float,
+        target_speedup: torch.Tensor | float,
         batch: int,
         device: torch.device,
     ) -> torch.Tensor:
@@ -724,21 +834,35 @@ class GridMLPThresholdPredictor(nn.Module):
         psnr_tensor = torch.as_tensor(
             target_psnr, dtype=torch.float32, device=device
         ).reshape(-1, 1)
+        speedup_tensor = torch.as_tensor(
+            target_speedup, dtype=torch.float32, device=device
+        ).reshape(-1, 1)
         if t_tensor.shape[0] == 1 and batch > 1:
             t_tensor = t_tensor.expand(batch, 1)
         if psnr_tensor.shape[0] == 1 and batch > 1:
             psnr_tensor = psnr_tensor.expand(batch, 1)
-        if t_tensor.shape[0] != batch or psnr_tensor.shape[0] != batch:
+        if speedup_tensor.shape[0] == 1 and batch > 1:
+            speedup_tensor = speedup_tensor.expand(batch, 1)
+        if (
+            t_tensor.shape[0] != batch
+            or psnr_tensor.shape[0] != batch
+            or speedup_tensor.shape[0] != batch
+        ):
             raise ValueError(
                 "Condition batch size mismatch: "
-                f"grid batch={batch}, t={t_tensor.shape[0]}, psnr={psnr_tensor.shape[0]}"
+                f"grid batch={batch}, t={t_tensor.shape[0]}, "
+                f"psnr={psnr_tensor.shape[0]}, speedup={speedup_tensor.shape[0]}"
             )
         if self.normalize_inputs:
             t_tensor = t_tensor.clamp(0.0, 1.0)
             psnr_tensor = (
                 (psnr_tensor - self.psnr_min) / (self.psnr_max - self.psnr_min)
             ).clamp(0.0, 1.0)
-        return torch.cat([t_tensor, psnr_tensor], dim=-1)
+            speedup_tensor = (
+                (speedup_tensor - self.speedup_min)
+                / (self.speedup_max - self.speedup_min)
+            ).clamp(0.0, 1.0)
+        return torch.cat([t_tensor, psnr_tensor, speedup_tensor], dim=-1)
 
 
 class MiniDiTBlock(nn.Module):
@@ -801,6 +925,8 @@ class MiniDiTCLSAdaptiveThresholdPredictor(nn.Module):
         normalize_inputs: bool = True,
         psnr_min: float = 10.0,
         psnr_max: float = 50.0,
+        speedup_min: float = 1.0,
+        speedup_max: float = 4.0,
         min_threshold: float = 0.10,
         max_threshold: float = 0.80,
         dropout: float = 0.05,
@@ -833,6 +959,8 @@ class MiniDiTCLSAdaptiveThresholdPredictor(nn.Module):
         self.normalize_inputs = normalize_inputs
         self.psnr_min = psnr_min
         self.psnr_max = psnr_max
+        self.speedup_min = speedup_min
+        self.speedup_max = speedup_max
         self.min_threshold = min_threshold
         self.max_threshold = max_threshold
         self.gate_init = gate_init
@@ -851,7 +979,7 @@ class MiniDiTCLSAdaptiveThresholdPredictor(nn.Module):
         self.pos_w = nn.Parameter(torch.zeros(grid_width, dim))
         self.pos_dropout = nn.Dropout(dropout)
         self.cond_embed = nn.Sequential(
-            nn.Linear(2, dim),
+            nn.Linear(3, dim),
             nn.SiLU(),
             nn.Linear(dim, dim),
             nn.SiLU(),
@@ -880,6 +1008,7 @@ class MiniDiTCLSAdaptiveThresholdPredictor(nn.Module):
         latent: torch.Tensor,
         t: torch.Tensor | float,
         target_psnr: torch.Tensor | float,
+        target_speedup: torch.Tensor | float,
     ) -> torch.Tensor:
         latent = self._normalize_latent_rank(latent).float()
         batch = latent.shape[0]
@@ -897,7 +1026,7 @@ class MiniDiTCLSAdaptiveThresholdPredictor(nn.Module):
         x = torch.cat([cls, tokens], dim=1)
         x = self.pos_dropout(x)
         cond = self.cond_embed(
-            self._prepare_condition(t, target_psnr, batch, latent.device)
+            self._prepare_condition(t, target_psnr, target_speedup, batch, latent.device)
         )
         for block in self.blocks:
             x = block(x, cond)
@@ -932,6 +1061,7 @@ class MiniDiTCLSAdaptiveThresholdPredictor(nn.Module):
         self,
         t: torch.Tensor | float,
         target_psnr: torch.Tensor | float,
+        target_speedup: torch.Tensor | float,
         batch: int,
         device: torch.device,
     ) -> torch.Tensor:
@@ -939,21 +1069,35 @@ class MiniDiTCLSAdaptiveThresholdPredictor(nn.Module):
         psnr_tensor = torch.as_tensor(
             target_psnr, dtype=torch.float32, device=device
         ).reshape(-1, 1)
+        speedup_tensor = torch.as_tensor(
+            target_speedup, dtype=torch.float32, device=device
+        ).reshape(-1, 1)
         if t_tensor.shape[0] == 1 and batch > 1:
             t_tensor = t_tensor.expand(batch, 1)
         if psnr_tensor.shape[0] == 1 and batch > 1:
             psnr_tensor = psnr_tensor.expand(batch, 1)
-        if t_tensor.shape[0] != batch or psnr_tensor.shape[0] != batch:
+        if speedup_tensor.shape[0] == 1 and batch > 1:
+            speedup_tensor = speedup_tensor.expand(batch, 1)
+        if (
+            t_tensor.shape[0] != batch
+            or psnr_tensor.shape[0] != batch
+            or speedup_tensor.shape[0] != batch
+        ):
             raise ValueError(
                 "Condition batch size mismatch: "
-                f"latent batch={batch}, t={t_tensor.shape[0]}, psnr={psnr_tensor.shape[0]}"
+                f"latent batch={batch}, t={t_tensor.shape[0]}, "
+                f"psnr={psnr_tensor.shape[0]}, speedup={speedup_tensor.shape[0]}"
             )
         if self.normalize_inputs:
             t_tensor = t_tensor.clamp(0.0, 1.0)
             psnr_tensor = (
                 (psnr_tensor - self.psnr_min) / (self.psnr_max - self.psnr_min)
             ).clamp(0.0, 1.0)
-        return torch.cat([t_tensor, psnr_tensor], dim=-1)
+            speedup_tensor = (
+                (speedup_tensor - self.speedup_min)
+                / (self.speedup_max - self.speedup_min)
+            ).clamp(0.0, 1.0)
+        return torch.cat([t_tensor, psnr_tensor, speedup_tensor], dim=-1)
 
     def _init_weights(self) -> None:
         nn.init.trunc_normal_(self.cls_token, std=0.02)

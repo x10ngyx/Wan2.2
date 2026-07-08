@@ -10,7 +10,6 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
 from adaptive_threshold_predictor.data import (
-    DATASET_MODES,
     DEFAULT_DATA_ROOT,
     TraceStepThresholdDataset,
     collate_trace_steps,
@@ -23,7 +22,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--data_root", type=Path, default=DEFAULT_DATA_ROOT)
     parser.add_argument("--out_dir", type=Path, required=True)
-    parser.add_argument("--dataset_mode", choices=DATASET_MODES, default="candidate_inverse")
     parser.add_argument("--patch_size", nargs=3, type=int, default=(3, 12, 8))
     parser.add_argument("--max_examples", type=int, default=None)
     parser.add_argument("--dtype", choices=("float16", "float32"), default="float16")
@@ -56,7 +54,6 @@ def main() -> None:
 
     dataset = TraceStepThresholdDataset(
         data_root=args.data_root,
-        dataset_mode=args.dataset_mode,
         max_examples=args.max_examples,
     )
     if not dataset:
@@ -68,6 +65,7 @@ def main() -> None:
     sample_ids: list[str] = []
     timestep_batches: list[torch.Tensor] = []
     target_psnr_batches: list[torch.Tensor] = []
+    target_speedup_batches: list[torch.Tensor] = []
     threshold_batches: list[torch.Tensor] = []
     step_index_values: list[int] = []
     source_index_values: list[int] = []
@@ -93,6 +91,7 @@ def main() -> None:
             sample_ids.extend(batch["sample_id"])
             timestep_batches.append(batch["timestep"].flatten().cpu())
             target_psnr_batches.append(batch["target_psnr"].flatten().cpu())
+            target_speedup_batches.append(batch["target_speedup"].flatten().cpu())
             threshold_batches.append(batch["threshold"].flatten().cpu())
             start = batch_index * args.batch_size
             stop = start + len(batch["sample_id"])
@@ -126,6 +125,7 @@ def main() -> None:
         "sample_id": sample_ids,
         "timestep": torch.cat(timestep_batches).to(torch.float32),
         "target_psnr": torch.cat(target_psnr_batches).to(torch.float32),
+        "target_speedup": torch.cat(target_speedup_batches).to(torch.float32),
         "threshold": torch.cat(threshold_batches).to(torch.float32),
         "step_index": torch.tensor(step_index_values, dtype=torch.long),
         "source_index": torch.tensor(source_index_values, dtype=torch.long),
@@ -133,7 +133,6 @@ def main() -> None:
     torch.save(metadata, args.out_dir / "metadata.pt")
 
     manifest = {
-        "dataset_mode": args.dataset_mode,
         "data_root": str(args.data_root),
         "num_examples": len(dataset),
         "patch_size": list(patch_size),

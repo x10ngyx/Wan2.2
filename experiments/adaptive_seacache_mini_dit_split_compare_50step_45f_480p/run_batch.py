@@ -300,7 +300,7 @@ def make_seacache_config(args):
     )
 
 
-def build_factory(args, model_path: Path, target_psnr: float):
+def build_factory(args, model_path: Path, target_psnr: float, target_speedup: float):
     from adaptive_seacache_wan22.cache import (
         AdaptiveSeaCacheGateConfig,
         build_adaptive_seacache_factory,
@@ -310,6 +310,7 @@ def build_factory(args, model_path: Path, target_psnr: float):
     config = AdaptiveSeaCacheGateConfig(
         model_path=model_path,
         target_psnr=target_psnr,
+        target_speedup=target_speedup,
         model_type="auto",
         min_threshold=args.adaptive_min_threshold,
         max_threshold=args.adaptive_max_threshold,
@@ -483,6 +484,12 @@ def cpu_validate(args) -> None:
     records = prepare_records(args)
     model_specs = model_specs_from_args(args)
     targets = args.target_psnrs.split()
+    target_speedups_by_psnr = target_speedups_from_args(args, targets)
+    target_pairs = [
+        (target, target_speedup)
+        for target in targets
+        for target_speedup in target_speedups_by_psnr[target]
+    ]
     payload = {
         "status": "ok",
         "records": [
@@ -497,7 +504,8 @@ def cpu_validate(args) -> None:
         ],
         "models": model_specs,
         "target_psnrs": targets,
-        "expected_candidates": len(records) * len(model_specs) * len(targets),
+        "target_speedups_by_psnr": target_speedups_by_psnr,
+        "expected_candidates": len(records) * len(model_specs) * len(target_pairs),
         "generate_baseline": False,
         "single_process_pipeline_load": True,
     }
@@ -505,7 +513,7 @@ def cpu_validate(args) -> None:
 
 
 def model_specs_from_args(args) -> list[dict[str, object]]:
-    return [
+    available = [
         {
             "model_split": "sample_split",
             "checkpoint": args.sample_split_model,
@@ -515,6 +523,31 @@ def model_specs_from_args(args) -> list[dict[str, object]]:
             "checkpoint": args.row_split_model,
         },
     ]
+    requested = set(args.model_splits.split())
+    unknown = requested - {str(item["model_split"]) for item in available}
+    if unknown:
+        raise ValueError(f"Unknown model_splits: {sorted(unknown)}")
+    return [item for item in available if str(item["model_split"]) in requested]
+
+
+def target_speedups_from_args(args, targets: list[str]) -> dict[str, list[float]]:
+    if args.target_speedups_by_psnr:
+        result: dict[str, list[float]] = {}
+        for spec in args.target_speedups_by_psnr.split():
+            if ":" not in spec:
+                raise ValueError(
+                    f"Invalid --target_speedups_by_psnr entry {spec!r}; expected PSNR:speedup[,speedup]."
+                )
+            target, values = spec.split(":", 1)
+            speeds = [float(item) for item in values.split(",") if item]
+            if not speeds:
+                raise ValueError(f"No speedup values provided for target PSNR {target!r}.")
+            result[target] = speeds
+        missing = [target for target in targets if target not in result]
+        if missing:
+            raise ValueError(f"Missing target speedups for PSNR targets: {missing}")
+        return {target: result[target] for target in targets}
+    return {target: [float(args.target_speedup)] for target in targets}
 
 
 def write_summary(exp_root: Path, rows: list[dict[str, object]]) -> None:
@@ -528,6 +561,7 @@ def write_summary(exp_root: Path, rows: list[dict[str, object]]) -> None:
         "model_split",
         "checkpoint",
         "target_psnr",
+        "target_speedup",
         "compute_elapsed_seconds",
         "generation_wall_elapsed_seconds",
         "baseline_compute_elapsed_seconds",
@@ -558,11 +592,16 @@ def write_summary(exp_root: Path, rows: list[dict[str, object]]) -> None:
         writer.writerows(rows)
 
     aggregate_path = exp_root / "results" / "aggregate_by_dataset_model_target.csv"
-    groups: dict[tuple[str, str, str], list[dict[str, object]]] = {}
+    groups: dict[tuple[str, str, str, str], list[dict[str, object]]] = {}
     for row in rows:
-        groups.setdefault((str(row["dataset"]), str(row["model_split"]), str(row["target_psnr"])), []).append(row)
+        groups.setdefault((
+            str(row["dataset"]),
+            str(row["model_split"]),
+            str(row["target_psnr"]),
+            str(row["target_speedup"]),
+        ), []).append(row)
     aggregate_rows = []
-    for (dataset, split, target), group in sorted(groups.items()):
+    for (dataset, split, target, target_speedup), group in sorted(groups.items()):
         completed = [
             row for row in group
             if row.get("compute_elapsed_seconds") not in {None, ""}
@@ -576,6 +615,7 @@ def write_summary(exp_root: Path, rows: list[dict[str, object]]) -> None:
             "dataset": dataset,
             "model_split": split,
             "target_psnr": target,
+            "target_speedup": target_speedup,
             "num_completed": len(completed),
             "overall_speedup": total_baseline / total_compute,
             "mean_psnr": sum(float(row["mean_psnr"]) for row in completed) / len(completed),
@@ -588,6 +628,7 @@ def write_summary(exp_root: Path, rows: list[dict[str, object]]) -> None:
             "dataset",
             "model_split",
             "target_psnr",
+            "target_speedup",
             "num_completed",
             "overall_speedup",
             "mean_psnr",
@@ -617,6 +658,17 @@ def main() -> None:
     parser.add_argument("--sample_guide_scale", type=float, nargs=2, default=None)
     parser.add_argument("--base_seed", type=int, default=42)
     parser.add_argument("--target_psnrs", default="22 28")
+    parser.add_argument("--target_speedup", type=float, default=2.0)
+    parser.add_argument(
+        "--target_speedups_by_psnr",
+        default="",
+        help="Optional mapping such as '22:2.2,2.5,2.8 28:1.4,1.7,2.0'.",
+    )
+    parser.add_argument(
+        "--model_splits",
+        default="sample_split row_split",
+        help="Whitespace-separated subset of sample_split and row_split.",
+    )
     parser.add_argument("--prompt_count", type=int, default=3)
     parser.add_argument("--vbench_prompt_jsonl", default=str(DEFAULT_VBENCH_PROMPTS))
     parser.add_argument("--vbench_prompt_start", type=int, default=0)
@@ -631,6 +683,7 @@ def main() -> None:
     parser.add_argument("--no_convert_model_dtype", dest="convert_model_dtype", action="store_false")
     parser.add_argument("--resume_existing", action="store_true")
     parser.add_argument("--cpu_validate", action="store_true")
+    parser.add_argument("--allow_custom_candidate_count", action="store_true")
     parser.add_argument("--ffprobe_bin", default=DEFAULT_FFPROBE)
     parser.add_argument("--seacache_threshold", type=float, default=0.2)
     parser.add_argument("--seacache_num_steps", type=int, default=None)
@@ -678,9 +731,19 @@ def main() -> None:
     records = prepare_records(args)
     model_specs = model_specs_from_args(args)
     targets = args.target_psnrs.split()
-    expected = len(records) * len(model_specs) * len(targets)
-    if expected != 24:
-        raise SystemExit(f"Expected 24 candidates for this pilot, got {expected}")
+    target_speedups_by_psnr = target_speedups_from_args(args, targets)
+    target_pairs = [
+        (target, target_speedup)
+        for target in targets
+        for target_speedup in target_speedups_by_psnr[target]
+    ]
+    expected = len(records) * len(model_specs) * len(target_pairs)
+    allowed_expected = {24, 36}
+    if expected not in allowed_expected and not args.allow_custom_candidate_count:
+        raise SystemExit(
+            f"Expected one of {sorted(allowed_expected)} candidates for this pilot, got {expected}. "
+            "Pass --allow_custom_candidate_count for custom sweeps."
+        )
 
     for subdir in [
         "adaptive_seacache",
@@ -709,6 +772,8 @@ def main() -> None:
         "sample_guide_scale": args.sample_guide_scale,
         "base_seed": args.base_seed,
         "target_psnrs": targets,
+        "target_speedup": args.target_speedup,
+        "target_speedups_by_psnr": target_speedups_by_psnr,
         "model_specs": model_specs,
         "records": [
             {
@@ -758,25 +823,27 @@ def main() -> None:
             for model in model_specs:
                 model_split = str(model["model_split"])
                 checkpoint = Path(str(model["checkpoint"]))
-                for target in targets:
+                for target, target_speedup in target_pairs:
                     target_value = float(target)
                     label = target_label(target)
-                    method_id = f"{dataset}_{sample_id}_{model_split}_{label}"
+                    speedup_label = f"speedup_{str(target_speedup).replace('.', 'p').replace('-', '_')}"
+                    method_id = f"{dataset}_{sample_id}_{model_split}_{label}_{speedup_label}"
                     output = (
                         exp_root
                         / "adaptive_seacache"
                         / dataset
                         / model_split
                         / label
+                        / speedup_label
                         / f"{sample_id}.mp4"
                     )
                     log_path = exp_root / "logs" / f"{method_id}.log"
                     time_file = exp_root / "logs" / f"{method_id}.time"
                     ffprobe_json = exp_root / "ffprobe" / f"{method_id}.json"
-                    psnr_json = exp_root / "psnr" / dataset / model_split / label / f"{sample_id}.json"
-                    psnr_log = exp_root / "psnr" / dataset / model_split / label / f"{sample_id}.log"
-                    trace_json = exp_root / "traces" / dataset / model_split / label / f"{sample_id}.json"
-                    trace_csv = exp_root / "traces" / dataset / model_split / label / f"{sample_id}.csv"
+                    psnr_json = exp_root / "psnr" / dataset / model_split / label / speedup_label / f"{sample_id}.json"
+                    psnr_log = exp_root / "psnr" / dataset / model_split / label / speedup_label / f"{sample_id}.log"
+                    trace_json = exp_root / "traces" / dataset / model_split / label / speedup_label / f"{sample_id}.json"
+                    trace_csv = exp_root / "traces" / dataset / model_split / label / speedup_label / f"{sample_id}.csv"
                     save_command_record(
                         exp_root / "commands" / f"{method_id}.sh",
                         sys.argv,
@@ -787,6 +854,7 @@ def main() -> None:
                             "model_split": model_split,
                             "checkpoint": checkpoint,
                             "target_psnr": target,
+                            "target_speedup": target_speedup,
                             "baseline_video": baseline_video,
                             "output": output,
                             "prompt": prompt,
@@ -799,7 +867,7 @@ def main() -> None:
                         print(f"Running {method_id}")
                         factory = None
                         try:
-                            factory = build_factory(args, checkpoint, target_value)
+                            factory = build_factory(args, checkpoint, target_value, target_speedup)
                             wan_text2video.SeaCacheTimestepCache = factory
                             summary = generate_one(
                                 args,
@@ -830,6 +898,7 @@ def main() -> None:
                                     "source_id": source_id,
                                     "model_split": model_split,
                                     "target_psnr": target,
+                                    "target_speedup": target_speedup,
                                     "checkpoint": checkpoint,
                                     "status": "exception",
                                     "error": repr(exc),
@@ -855,6 +924,7 @@ def main() -> None:
                         "model_split": model_split,
                         "checkpoint": str(checkpoint),
                         "target_psnr": target,
+                        "target_speedup": target_speedup,
                         "compute_elapsed_seconds": elapsed,
                         "generation_wall_elapsed_seconds": None,
                         "baseline_compute_elapsed_seconds": baseline_elapsed,
@@ -877,6 +947,7 @@ def main() -> None:
                             and existing["sample_id"] == sample_id
                             and existing["model_split"] == model_split
                             and existing["target_psnr"] == target
+                            and existing["target_speedup"] == target_speedup
                         )
                     ]
                     summary_rows.append(row_out)

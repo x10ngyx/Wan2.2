@@ -23,6 +23,7 @@ from wan.timestep_cache import SeaCacheTimestepCache, SeaCacheTimestepCacheConfi
 class AdaptiveSeaCacheGateConfig:
     model_path: Path
     target_psnr: float
+    target_speedup: float
     model_type: str = "auto"
     feature_set: str = "temporal_mean"
     feature_sets: tuple[str, ...] = (
@@ -46,6 +47,8 @@ class AdaptiveSeaCacheGateConfig:
     dit_gate_init: float = 0.0
     psnr_min: float = 10.0
     psnr_max: float = 50.0
+    speedup_min: float = 1.0
+    speedup_max: float = 4.0
     min_threshold: float = 0.0
     max_threshold: float = 1.0
     device: str = "cuda"
@@ -70,6 +73,8 @@ class OnlineAdaptiveThresholdGate(nn.Module):
                 hidden_dim=config.hidden_dim,
                 psnr_min=config.psnr_min,
                 psnr_max=config.psnr_max,
+                speedup_min=config.speedup_min,
+                speedup_max=config.speedup_max,
                 min_threshold=config.min_threshold,
                 max_threshold=config.max_threshold,
             )
@@ -81,6 +86,8 @@ class OnlineAdaptiveThresholdGate(nn.Module):
                 feature_embedding_dim=config.feature_embedding_dim,
                 psnr_min=config.psnr_min,
                 psnr_max=config.psnr_max,
+                speedup_min=config.speedup_min,
+                speedup_max=config.speedup_max,
                 min_threshold=config.min_threshold,
                 max_threshold=config.max_threshold,
             )
@@ -98,6 +105,8 @@ class OnlineAdaptiveThresholdGate(nn.Module):
                 mlp_ratio=config.dit_mlp_ratio,
                 psnr_min=config.psnr_min,
                 psnr_max=config.psnr_max,
+                speedup_min=config.speedup_min,
+                speedup_max=config.speedup_max,
                 min_threshold=config.min_threshold,
                 max_threshold=config.max_threshold,
                 dropout=config.dit_dropout,
@@ -131,16 +140,31 @@ class OnlineAdaptiveThresholdGate(nn.Module):
         )
         step_fraction = float(step_index) / float(max(num_steps - 1, 1))
         if self.model_type == "mini_dit_cls":
-            pred = self.model(latent, step_fraction, self.config.target_psnr)
+            pred = self.model(
+                latent,
+                step_fraction,
+                self.config.target_psnr,
+                self.config.target_speedup,
+            )
         elif self.model_type == "mlp_gated":
             features = {
                 name: self._extract_feature(latent, name)
                 for name in self.model.feature_sets
             }
-            pred = self.model(features, step_fraction, self.config.target_psnr)
+            pred = self.model(
+                features,
+                step_fraction,
+                self.config.target_psnr,
+                self.config.target_speedup,
+            )
         else:
             feature = self._extract_feature(latent, self.config.feature_set)
-            pred = self.model(feature, step_fraction, self.config.target_psnr)
+            pred = self.model(
+                feature,
+                step_fraction,
+                self.config.target_psnr,
+                self.config.target_speedup,
+            )
         threshold = float(pred.flatten()[0].detach().cpu().item())
         return max(
             self.config.min_threshold,
@@ -279,6 +303,7 @@ def _load_adaptive_gate_state(
         config = AdaptiveSeaCacheGateConfig(
             model_path=config.model_path,
             target_psnr=config.target_psnr,
+            target_speedup=config.target_speedup,
             model_type="mini_dit_cls",
             feature_set=config.feature_set,
             feature_sets=config.feature_sets,
@@ -296,6 +321,8 @@ def _load_adaptive_gate_state(
             dit_gate_init=float(metadata.get("dit_gate_init", config.dit_gate_init)),
             psnr_min=float(metadata.get("psnr_min", config.psnr_min)),
             psnr_max=float(metadata.get("psnr_max", config.psnr_max)),
+            speedup_min=float(metadata.get("speedup_min", config.speedup_min)),
+            speedup_max=float(metadata.get("speedup_max", config.speedup_max)),
             min_threshold=float(metadata.get("min_threshold", config.min_threshold)),
             max_threshold=float(metadata.get("max_threshold", config.max_threshold)),
             device=config.device,
@@ -312,6 +339,7 @@ def _load_adaptive_gate_state(
         config = AdaptiveSeaCacheGateConfig(
             model_path=config.model_path,
             target_psnr=config.target_psnr,
+            target_speedup=config.target_speedup,
             model_type="mlp_gated",
             feature_set=config.feature_set,
             feature_sets=feature_sets,
@@ -342,6 +370,8 @@ def _load_adaptive_gate_state(
             dit_gate_init=config.dit_gate_init,
             psnr_min=float(metadata.get("psnr_min", config.psnr_min)),
             psnr_max=float(metadata.get("psnr_max", config.psnr_max)),
+            speedup_min=float(metadata.get("speedup_min", config.speedup_min)),
+            speedup_max=float(metadata.get("speedup_max", config.speedup_max)),
             min_threshold=float(metadata.get("min_threshold", config.min_threshold)),
             max_threshold=float(metadata.get("max_threshold", config.max_threshold)),
             device=config.device,
@@ -351,6 +381,7 @@ def _load_adaptive_gate_state(
         config = AdaptiveSeaCacheGateConfig(
             model_path=config.model_path,
             target_psnr=config.target_psnr,
+            target_speedup=config.target_speedup,
             model_type="mlp",
             feature_set=str(metadata.get("feature_set", config.feature_set)),
             feature_sets=config.feature_sets,
@@ -368,6 +399,8 @@ def _load_adaptive_gate_state(
             dit_gate_init=config.dit_gate_init,
             psnr_min=float(metadata.get("psnr_min", config.psnr_min)),
             psnr_max=float(metadata.get("psnr_max", config.psnr_max)),
+            speedup_min=float(metadata.get("speedup_min", config.speedup_min)),
+            speedup_max=float(metadata.get("speedup_max", config.speedup_max)),
             min_threshold=float(metadata.get("min_threshold", config.min_threshold)),
             max_threshold=float(metadata.get("max_threshold", config.max_threshold)),
             device=config.device,
@@ -606,10 +639,12 @@ def build_adaptive_seacache_factory(
     gate = OnlineAdaptiveThresholdGate.load(gate_config)
     logging.info(
         "Loaded adaptive SeaCache gate: model=%s model_type=%s target_psnr=%.3f "
+        "target_speedup=%.3f "
         "feature_set=%s hidden_dim=%d",
         gate.config.model_path,
         gate.model_type,
         gate.config.target_psnr,
+        gate.config.target_speedup,
         gate.config.feature_set,
         gate.config.hidden_dim,
     )

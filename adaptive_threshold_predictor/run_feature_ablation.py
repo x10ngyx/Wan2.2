@@ -6,7 +6,6 @@ import json
 import subprocess
 from pathlib import Path
 
-from adaptive_threshold_predictor.data import DATASET_MODES
 from adaptive_threshold_predictor.models import FEATURE_SETS
 
 
@@ -17,7 +16,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--python", default="/hy-tmp/miniconda3/envs/Wan2.2/bin/python")
     parser.add_argument("--out_root", type=Path, default=Path("/hy-tmp/wan22_adaptive_threshold_feature_ablation"))
     parser.add_argument("--cache_dir", type=Path, default=None)
-    parser.add_argument("--dataset_mode", choices=DATASET_MODES, default="candidate_inverse")
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--hidden_dim", type=int, default=64)
@@ -47,8 +45,6 @@ def main() -> None:
             args.python,
             "-m",
             "adaptive_threshold_predictor.train_gate",
-            "--dataset_mode",
-            args.dataset_mode,
             "--feature_set",
             feature_set,
             "--epochs",

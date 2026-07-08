@@ -9,7 +9,6 @@ import torch
 from torch.utils.data import DataLoader
 
 from adaptive_threshold_predictor.data import (
-    DATASET_MODES,
     DEFAULT_DATA_ROOT,
     TraceStepThresholdDataset,
     collate_trace_steps,
@@ -22,7 +21,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--data_root", type=Path, default=DEFAULT_DATA_ROOT)
     parser.add_argument("--out_dir", type=Path, required=True)
-    parser.add_argument("--dataset_mode", choices=DATASET_MODES, default="candidate_inverse")
     parser.add_argument("--max_examples", type=int, default=None)
     parser.add_argument("--dtype", choices=("float16", "float32"), default="float16")
     parser.add_argument("--shard_size", type=int, default=512)
@@ -70,7 +68,6 @@ def main() -> None:
 
     dataset = TraceStepThresholdDataset(
         data_root=args.data_root,
-        dataset_mode=args.dataset_mode,
         max_examples=args.max_examples,
     )
     if not dataset:
@@ -97,6 +94,7 @@ def main() -> None:
     sample_ids: list[str] = []
     timestep_batches: list[torch.Tensor] = []
     target_psnr_batches: list[torch.Tensor] = []
+    target_speedup_batches: list[torch.Tensor] = []
     threshold_batches: list[torch.Tensor] = []
     step_index_values: list[int] = []
     source_index_values: list[int] = []
@@ -123,6 +121,9 @@ def main() -> None:
             timestep_batches.append(batch["timestep"][cursor:cursor + take].flatten().cpu())
             target_psnr_batches.append(
                 batch["target_psnr"][cursor:cursor + take].flatten().cpu()
+            )
+            target_speedup_batches.append(
+                batch["target_speedup"][cursor:cursor + take].flatten().cpu()
             )
             threshold_batches.append(batch["threshold"][cursor:cursor + take].flatten().cpu())
             shard_count += take
@@ -181,6 +182,7 @@ def main() -> None:
         "sample_id": sample_ids,
         "timestep": torch.cat(timestep_batches).to(torch.float32),
         "target_psnr": torch.cat(target_psnr_batches).to(torch.float32),
+        "target_speedup": torch.cat(target_speedup_batches).to(torch.float32),
         "threshold": torch.cat(threshold_batches).to(torch.float32),
         "step_index": torch.tensor(step_index_values, dtype=torch.long),
         "source_index": torch.tensor(source_index_values, dtype=torch.long),
@@ -193,7 +195,6 @@ def main() -> None:
                                    map_location="cpu",
                                    weights_only=True).shape[1:])
     manifest = {
-        "dataset_mode": args.dataset_mode,
         "data_root": str(args.data_root),
         "num_examples": len(dataset),
         "dtype": args.dtype,

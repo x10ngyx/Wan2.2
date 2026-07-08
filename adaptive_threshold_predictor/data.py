@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import csv
 import json
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Iterable
 
 import torch
 from torch.utils.data import Dataset
@@ -15,9 +14,7 @@ from adaptive_threshold_predictor.models import normalize_feature_sets
 
 
 DEFAULT_DATA_ROOT = Path("/hy-tmp/openvid_100_seacache_trace_data")
-DEFAULT_TARGET_PSNRS = (20.0, 22.0, 25.0, 28.0, 30.0, 35.0)
 DEFAULT_STEP_INDICES = tuple(range(50))
-DATASET_MODES = ("candidate_inverse", "target_oracle")
 
 
 @dataclass(frozen=True)
@@ -28,6 +25,7 @@ class GateExample:
     num_steps: int
     timestep: float
     target_psnr: float
+    target_speedup: float
     threshold: float
     source_threshold: float
     mean_psnr: float
@@ -40,68 +38,6 @@ def load_summary_rows(data_root: Path = DEFAULT_DATA_ROOT) -> list[dict[str, str
         return list(csv.DictReader(handle))
 
 
-def make_oracle_threshold_examples(
-    data_root: Path = DEFAULT_DATA_ROOT,
-    target_psnrs: Iterable[float] = DEFAULT_TARGET_PSNRS,
-    step_indices: Iterable[int] = DEFAULT_STEP_INDICES,
-    max_examples: int | None = None,
-) -> list[GateExample]:
-    """Build direct-threshold labels from a threshold sweep table.
-
-    For each sample and target PSNR, the label is the fastest threshold whose
-    measured PSNR is at least the target. If no candidate reaches the target,
-    the highest-PSNR candidate is used. This keeps the first-stage direct
-    threshold predictor trainable with the existing SeaCache sweep data.
-    """
-
-    rows_by_sample: dict[str, list[dict[str, str]]] = {}
-    for row in load_summary_rows(data_root):
-        rows_by_sample.setdefault(row["sample_id"], []).append(row)
-
-    examples: list[GateExample] = []
-    for sample_id, rows in rows_by_sample.items():
-        parsed = [
-            {
-                **row,
-                "_threshold": float(row["threshold"]),
-                "_mean_psnr": float(row["mean_psnr"]),
-                "_speedup": float(row["speedup"]),
-            }
-            for row in rows
-        ]
-        step_root = data_root / "data" / "baseline" / "step_inputs" / sample_id
-        meta_path = step_root / "meta.pt"
-        meta = torch.load(meta_path, map_location="cpu", weights_only=True)
-        timesteps = meta["timesteps"]
-        for target_psnr in target_psnrs:
-            feasible = [row for row in parsed if row["_mean_psnr"] >= target_psnr]
-            if feasible:
-                best = max(feasible, key=lambda row: row["_speedup"])
-            else:
-                best = max(parsed, key=lambda row: row["_mean_psnr"])
-            for step_index in step_indices:
-                step_path = step_root / f"step_{step_index:03d}.pt"
-                if not step_path.exists():
-                    continue
-                examples.append(
-                    GateExample(
-                        sample_id=sample_id,
-                        step_path=step_path,
-                        step_index=step_index,
-                        num_steps=len(timesteps),
-                        timestep=float(timesteps[step_index]),
-                        target_psnr=float(target_psnr),
-                        threshold=float(best["_threshold"]),
-                        source_threshold=float(best["_threshold"]),
-                        mean_psnr=float(best["_mean_psnr"]),
-                        speedup=float(best["_speedup"]),
-                    )
-                )
-                if max_examples is not None and len(examples) >= max_examples:
-                    return examples
-    return examples
-
-
 def make_candidate_inverse_examples(
     data_root: Path = DEFAULT_DATA_ROOT,
     step_indices: Iterable[int] = DEFAULT_STEP_INDICES,
@@ -112,7 +48,8 @@ def make_candidate_inverse_examples(
     Each measured threshold candidate contributes one example per selected
     denoising step:
 
-        input: candidate run latent at step, step fraction, achieved PSNR
+        input: candidate run latent at step, step fraction, achieved PSNR,
+               achieved speedup
         label: threshold used by that candidate run
 
     With 100 samples, 10 threshold candidates, and 50 steps, this creates
@@ -144,6 +81,7 @@ def make_candidate_inverse_examples(
                     num_steps=len(timesteps),
                     timestep=float(timesteps[step_index]),
                     target_psnr=achieved_psnr,
+                    target_speedup=speedup,
                     threshold=threshold,
                     source_threshold=threshold,
                     mean_psnr=achieved_psnr,
@@ -159,29 +97,14 @@ class TraceStepThresholdDataset(Dataset):
     def __init__(
         self,
         data_root: Path = DEFAULT_DATA_ROOT,
-        dataset_mode: str = "candidate_inverse",
-        target_psnrs: Iterable[float] = DEFAULT_TARGET_PSNRS,
         step_indices: Iterable[int] = DEFAULT_STEP_INDICES,
         max_examples: int | None = None,
     ) -> None:
-        if dataset_mode not in DATASET_MODES:
-            raise ValueError(
-                f"Unknown dataset_mode {dataset_mode!r}; expected one of {DATASET_MODES}"
-            )
-        self.dataset_mode = dataset_mode
-        if dataset_mode == "candidate_inverse":
-            self.examples = make_candidate_inverse_examples(
-                data_root=data_root,
-                step_indices=step_indices,
-                max_examples=max_examples,
-            )
-        else:
-            self.examples = make_oracle_threshold_examples(
-                data_root=data_root,
-                target_psnrs=target_psnrs,
-                step_indices=step_indices,
-                max_examples=max_examples,
-            )
+        self.examples = make_candidate_inverse_examples(
+            data_root=data_root,
+            step_indices=step_indices,
+            max_examples=max_examples,
+        )
 
     def __len__(self) -> int:
         return len(self.examples)
@@ -197,6 +120,7 @@ class TraceStepThresholdDataset(Dataset):
             "latent": latent,
             "timestep": torch.tensor([step_fraction], dtype=torch.float32),
             "target_psnr": torch.tensor([example.target_psnr], dtype=torch.float32),
+            "target_speedup": torch.tensor([example.target_speedup], dtype=torch.float32),
             "threshold": torch.tensor([example.threshold], dtype=torch.float32),
         }
 
@@ -207,8 +131,49 @@ def collate_trace_steps(batch: list[dict[str, torch.Tensor | str]]) -> dict[str,
         "latent": torch.stack([item["latent"] for item in batch]),  # type: ignore[arg-type]
         "timestep": torch.stack([item["timestep"] for item in batch]),  # type: ignore[arg-type]
         "target_psnr": torch.stack([item["target_psnr"] for item in batch]),  # type: ignore[arg-type]
+        "target_speedup": torch.stack([item["target_speedup"] for item in batch]),  # type: ignore[arg-type]
         "threshold": torch.stack([item["threshold"] for item in batch]),  # type: ignore[arg-type]
     }
+
+
+def _load_cache_json(cache_dir: Path, name: str) -> dict[str, object]:
+    path = cache_dir / name
+    if not path.exists():
+        return {}
+    with path.open("r") as handle:
+        loaded = json.load(handle)
+    if not isinstance(loaded, dict):
+        raise ValueError(f"Expected object in {path}, got {type(loaded).__name__}")
+    return loaded
+
+
+def _target_speedup_from_metadata(
+    metadata: dict[str, object],
+    cache_dir: Path,
+    expected_count: int,
+) -> torch.Tensor:
+    for key in ("target_speedup", "speedup"):
+        if key in metadata:
+            return metadata[key].float()  # type: ignore[union-attr]
+
+    cache_config = _load_cache_json(cache_dir, "cache_config.json")
+    manifest = _load_cache_json(cache_dir, "manifest.json")
+    data_root = Path(str(
+        cache_config.get("data_root")
+        or manifest.get("data_root")
+        or DEFAULT_DATA_ROOT
+    ))
+    source_index = metadata["source_index"].long()  # type: ignore[union-attr]
+    examples = make_candidate_inverse_examples(data_root=data_root)
+    values = torch.tensor(
+        [examples[int(index)].target_speedup for index in source_index],
+        dtype=torch.float32,
+    )
+    if int(values.numel()) != expected_count:
+        raise ValueError(
+            f"Recovered target_speedup count mismatch: {values.numel()} != {expected_count}"
+        )
+    return values
 
 
 def split_indices_by_sample_id(
@@ -271,6 +236,11 @@ class PackedRawLatentThresholdDataset(Dataset):
         self.sample_ids = metadata["sample_id"]
         self.timestep = metadata["timestep"].float()
         self.target_psnr = metadata["target_psnr"].float()
+        self.target_speedup = _target_speedup_from_metadata(
+            metadata,
+            cache_dir,
+            expected_count=len(self.sample_ids),
+        )
         self.threshold = metadata["threshold"].float()
         self.step_index = metadata["step_index"].long()
         self.source_index = metadata["source_index"].long()
@@ -281,6 +251,7 @@ class PackedRawLatentThresholdDataset(Dataset):
             self.sample_ids = self.sample_ids[:max_examples]
             self.timestep = self.timestep[:max_examples]
             self.target_psnr = self.target_psnr[:max_examples]
+            self.target_speedup = self.target_speedup[:max_examples]
             self.threshold = self.threshold[:max_examples]
             self.step_index = self.step_index[:max_examples]
             self.source_index = self.source_index[:max_examples]
@@ -324,6 +295,7 @@ class PackedRawLatentThresholdDataset(Dataset):
             "latent": latent,
             "timestep": self.timestep[index].view(1),
             "target_psnr": self.target_psnr[index].view(1),
+            "target_speedup": self.target_speedup[index].view(1),
             "threshold": self.threshold[index].view(1),
             "step_index": self.step_index[index].view(1),
         }
@@ -374,6 +346,11 @@ class CachedFeatureThresholdDataset(Dataset):
         metadata = torch.load(metadata_path, map_location="cpu", weights_only=True)
         self.timestep = metadata["timestep"].float()
         self.target_psnr = metadata["target_psnr"].float()
+        self.target_speedup = _target_speedup_from_metadata(
+            metadata,
+            cache_dir,
+            expected_count=int(next(iter(self.features_by_name.values())).shape[0]),
+        )
         self.threshold = metadata["threshold"].float()
         self.sample_ids = metadata["sample_id"]
         self.step_index = metadata["step_index"].long()
@@ -392,6 +369,7 @@ class CachedFeatureThresholdDataset(Dataset):
             }
             self.timestep = self.timestep[:max_examples]
             self.target_psnr = self.target_psnr[:max_examples]
+            self.target_speedup = self.target_speedup[:max_examples]
             self.threshold = self.threshold[:max_examples]
             self.sample_ids = self.sample_ids[:max_examples]
             self.step_index = self.step_index[:max_examples]
@@ -413,6 +391,7 @@ class CachedFeatureThresholdDataset(Dataset):
             },
             "timestep": self.timestep[index].view(1),
             "target_psnr": self.target_psnr[index].view(1),
+            "target_speedup": self.target_speedup[index].view(1),
             "threshold": self.threshold[index].view(1),
         }
         if self.features is not None:
@@ -434,6 +413,7 @@ def collate_cached_features(
         },
         "timestep": torch.stack([item["timestep"] for item in batch]),  # type: ignore[arg-type]
         "target_psnr": torch.stack([item["target_psnr"] for item in batch]),  # type: ignore[arg-type]
+        "target_speedup": torch.stack([item["target_speedup"] for item in batch]),  # type: ignore[arg-type]
         "threshold": torch.stack([item["threshold"] for item in batch]),  # type: ignore[arg-type]
     }
     if "feature" in batch[0]:
@@ -462,6 +442,11 @@ class GridFeatureThresholdDataset(Dataset):
         metadata = torch.load(metadata_path, map_location="cpu", weights_only=True)
         self.timestep = metadata["timestep"].float()
         self.target_psnr = metadata["target_psnr"].float()
+        self.target_speedup = _target_speedup_from_metadata(
+            metadata,
+            cache_dir,
+            expected_count=int(self.grid_features.shape[0]),
+        )
         self.threshold = metadata["threshold"].float()
         self.sample_ids = metadata["sample_id"]
         self.step_index = metadata["step_index"].long()
@@ -475,6 +460,7 @@ class GridFeatureThresholdDataset(Dataset):
             self.grid_features = self.grid_features[:max_examples]
             self.timestep = self.timestep[:max_examples]
             self.target_psnr = self.target_psnr[:max_examples]
+            self.target_speedup = self.target_speedup[:max_examples]
             self.threshold = self.threshold[:max_examples]
             self.sample_ids = self.sample_ids[:max_examples]
             self.step_index = self.step_index[:max_examples]
@@ -497,6 +483,7 @@ class GridFeatureThresholdDataset(Dataset):
             "grid_feature": self.grid_features[index].float(),
             "timestep": self.timestep[index].view(1),
             "target_psnr": self.target_psnr[index].view(1),
+            "target_speedup": self.target_speedup[index].view(1),
             "threshold": self.threshold[index].view(1),
             "step_index": self.step_index[index].view(1),
         }
@@ -510,6 +497,7 @@ def collate_grid_features(
         "grid_feature": torch.stack([item["grid_feature"] for item in batch]),  # type: ignore[arg-type]
         "timestep": torch.stack([item["timestep"] for item in batch]),  # type: ignore[arg-type]
         "target_psnr": torch.stack([item["target_psnr"] for item in batch]),  # type: ignore[arg-type]
+        "target_speedup": torch.stack([item["target_speedup"] for item in batch]),  # type: ignore[arg-type]
         "threshold": torch.stack([item["threshold"] for item in batch]),  # type: ignore[arg-type]
         "step_index": torch.stack([item["step_index"] for item in batch]),  # type: ignore[arg-type]
     }

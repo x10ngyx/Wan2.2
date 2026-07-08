@@ -476,6 +476,7 @@ def main() -> None:
     parser.add_argument("--sample_guide_scale", type=float, nargs=2, default=None)
     parser.add_argument("--base_seed", type=int, default=42)
     parser.add_argument("--target_psnrs", default="20 25 30")
+    parser.add_argument("--target_speedup", type=float, default=2.0)
     parser.add_argument("--prompt_limit", type=int, default=10)
     parser.add_argument("--prompt_start", type=int, default=0)
     parser.add_argument("--offload_model", type=lambda value: value.lower() in {"1", "true", "yes", "y"}, default=True)
@@ -565,7 +566,7 @@ def main() -> None:
         for subdir in ["adaptive_seacache", "psnr", "traces"]:
             (exp_root / subdir / label).mkdir(parents=True, exist_ok=True)
         (exp_root / "targets" / f"{label}.env").write_text(
-            f"target_psnr={target_psnr}\n",
+            f"target_psnr={target_psnr}\ntarget_speedup={args.target_speedup}\n",
             encoding="utf-8",
         )
 
@@ -590,6 +591,7 @@ def main() -> None:
         "sample_guide_scale": args.sample_guide_scale,
         "base_seed": args.base_seed,
         "target_psnrs": args.target_psnrs,
+        "target_speedup": args.target_speedup,
         "prompt_start": args.prompt_start,
         "prompt_limit": args.prompt_limit,
         "resume_existing": args.resume_existing,
@@ -632,6 +634,7 @@ def main() -> None:
     gate_config = AdaptiveSeaCacheGateConfig(
         model_path=Path(args.adaptive_gate_model),
         target_psnr=0.0,
+        target_speedup=args.target_speedup,
         feature_set=args.adaptive_feature_set,
         hidden_dim=args.adaptive_hidden_dim,
         feature_dim=args.adaptive_feature_dim,
@@ -699,6 +702,7 @@ def main() -> None:
                 {
                     "method": "adaptive_seacache",
                     "target_psnr": target_psnr,
+                    "target_speedup": args.target_speedup,
                     "sample_id": sample_id,
                     "source_id": source_id,
                     "seed": seed,
@@ -771,6 +775,7 @@ def main() -> None:
                         "seed": seed,
                         "method": "adaptive_seacache",
                         "target_psnr": target_value,
+                        "target_speedup": args.target_speedup,
                         "adaptive_feature_set": args.adaptive_feature_set,
                         "adaptive_hidden_dim": args.adaptive_hidden_dim,
                         "compute_elapsed_seconds": elapsed,
@@ -797,6 +802,7 @@ def main() -> None:
                     {
                         "method": "adaptive_seacache",
                         "target_psnr": target_psnr,
+                        "target_speedup": args.target_speedup,
                         "target_label": label,
                         "sample_id": sample_id,
                         "source_id": source_id,
@@ -821,6 +827,7 @@ def main() -> None:
         "seed",
         "method",
         "target_psnr",
+        "target_speedup",
         "adaptive_feature_set",
         "adaptive_hidden_dim",
         "compute_elapsed_seconds",
