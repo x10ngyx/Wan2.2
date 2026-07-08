@@ -50,7 +50,7 @@ def main() -> None:
         )
     print(f"model parameters: {count_parameters(model)}")
     print(f"predicted threshold shape: {tuple(pred.shape)}")
-    print(f"predicted threshold range [0,1]: {pred.flatten().tolist()}")
+    print(f"predicted threshold values: {pred.flatten().tolist()}")
 
 
 if __name__ == "__main__":

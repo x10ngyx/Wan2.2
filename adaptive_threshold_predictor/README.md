@@ -4,12 +4,49 @@ This top-level package contains the adaptive threshold prediction work, separate
 from the Wan2.2 generation runners. The current stage is timestep-cache-only, so
 `ImprovedAdaCacheGate` predicts one SeaCache threshold.
 
+## File Map
+
+Use `train_gate.py` as the main training entry point. The other scripts either
+build faster training caches or launch ablation batches.
+
+```text
+README.md                   This handoff and usage guide.
+__init__.py                 Package marker only.
+data.py                     Dataset builders, cached dataset readers, collate
+                            functions, and sample/row split helpers.
+models.py                   MLP, gated multi-feature MLP, condition-only,
+                            grid-MLP, and MiniDiT-CLS threshold predictors.
+train_gate.py               Main trainer. Writes config, split, metrics,
+                            checkpoints, and validation predictions.
+inspect_trace_data.py       Small smoke check for one traced latent and one
+                            untrained model forward pass.
+build_feature_cache.py      Builds pooled 2x2x2-style feature caches for MLP
+                            and gated MLP training.
+build_grid_feature_cache.py Builds fixed avg-pool 3D grid caches for the
+                            grid_mlp capacity baseline.
+build_raw_latent_cache.py   Packs raw step latents into shard files for faster
+                            MiniDiT-CLS training.
+run_feature_ablation.py     Runs train_gate.py once per feature set and writes
+                            a feature-ablation summary table.
+run_grid_ablation.py        Builds pooled-feature caches for several grid sizes
+                            and runs run_feature_ablation.py on each.
+```
+
+The package assumes the repo root is on `PYTHONPATH`, which is true when running
+commands from `/hy-tmp/work/Wan2.2` with `python -m adaptive_threshold_predictor...`.
+
 ## Data
 
 Default trace data root:
 
 ```bash
-/hy-tmp/openvid_100_seacache_trace_data/data
+/hy-tmp/openvid_100_seacache_trace_data
+```
+
+The summary CSV is read from:
+
+```text
+/hy-tmp/openvid_100_seacache_trace_data/data/tables/summary.csv
 ```
 
 Observed single-step latent tensors are saved as:
@@ -68,13 +105,19 @@ The train/validation split is grouped by `sample_id`: all target PSNRs and
 sampled denoising steps from the same source sample stay on the same side of the
 split.
 
-Each measured SeaCache candidate contributes one example per denoising step:
+Current training uses `candidate_inverse` labels. Each measured SeaCache
+candidate contributes one example per denoising step:
 
 ```text
 input: candidate latent at current step, step_index / 49, achieved PSNR,
        achieved speedup
 label: threshold used by the candidate run
 ```
+
+In the code these achieved values are named `target_psnr` and `target_speedup`
+because the online predictor receives desired target values at inference time.
+For offline inverse training they are measured candidate outcomes, not manually
+configured targets.
 
 With the current data this gives:
 
@@ -99,7 +142,7 @@ speedup_max = 4
 ```
 
 These bounds cover the observed table ranges while leaving margin around the
-configured target PSNR and speedup values.
+online target PSNR and speedup values used by adaptive inference experiments.
 
 ## Quick Checks
 
@@ -130,10 +173,8 @@ Run all feature-set ablations with the same architecture and collect a summary:
   --out_root /hy-tmp/wan22_adaptive_threshold_feature_ablation
 ```
 
-The first label builder constructs direct-threshold labels from the SeaCache
-sweep table: for each sample and target PSNR, it selects the fastest threshold
-whose measured PSNR reaches the target, or the highest-PSNR threshold if the
-target is unreachable.
+For quick checks, keep `--max_examples` small if the full OpenVid trace root is
+not present or if you only need to validate imports and tensor shapes.
 
 ## Cached Features
 
@@ -168,8 +209,8 @@ metrics, validation predictions, and summary CSV/JSON files.
 
 The legacy single-feature MLP path remains available through `--feature_set` for
 the original ablations. Multi-feature MLP runs use gated fusion: each feature is
-encoded by its own small MLP, and the timestep/PSNR condition branch predicts a
-softmax gate over feature embeddings.
+encoded by its own small MLP, and the timestep/PSNR/speedup condition branch
+predicts a softmax gate over feature embeddings.
 
 ```bash
 /hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.train_gate \
@@ -215,11 +256,24 @@ latent [B,16,12,60,104]
   -> CLS Transformer readout
 ```
 
-Train it directly from the trace data:
+For repeated MiniDiT training, first pack raw latents into shards so training
+does not reopen 50,000 individual step files:
+
+```bash
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.build_raw_latent_cache \
+  --out_dir /hy-tmp/wan22_adaptive_threshold_raw_latent_cache_fp16 \
+  --dtype float16 \
+  --shard_size 512 \
+  --batch_size 16 \
+  --num_workers 2
+```
+
+Train from the packed cache:
 
 ```bash
 /hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.train_gate \
   --model_type mini_dit_cls \
+  --packed_latent_cache_dir /hy-tmp/wan22_adaptive_threshold_raw_latent_cache_fp16 \
   --out_dir /hy-tmp/wan22_adaptive_threshold_mini_dit_cls_3x12x8_d96_l2 \
   --batch_size 64 \
   --epochs 30 \
@@ -242,6 +296,33 @@ Train it directly from the trace data:
   --save_epoch_val_predictions \
   --device cuda \
   --num_workers 4
+```
+
+You can omit `--packed_latent_cache_dir` to train directly from individual trace
+step files, but that path is slower and mainly useful for small smoke runs.
+
+## Grid MLP Baseline
+
+`grid_mlp` is a capacity baseline over fixed avg-pooled 3D grid features. It is
+separate from MiniDiT: MiniDiT learns its Conv3d patch embedding from raw
+latents, while `grid_mlp` consumes a prebuilt `grid_features.pt` cache.
+
+```bash
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.build_grid_feature_cache \
+  --out_dir /hy-tmp/wan22_adaptive_threshold_grid_cache_3x12x8 \
+  --patch_size 3 12 8 \
+  --dtype float16 \
+  --batch_size 8 \
+  --num_workers 4 \
+  --device cuda
+
+/hy-tmp/miniconda3/envs/Wan2.2/bin/python -m adaptive_threshold_predictor.train_gate \
+  --model_type grid_mlp \
+  --grid_cache_dir /hy-tmp/wan22_adaptive_threshold_grid_cache_3x12x8 \
+  --out_dir /hy-tmp/wan22_adaptive_threshold_grid_mlp_3x12x8 \
+  --batch_size 256 \
+  --epochs 30 \
+  --device cuda
 ```
 
 The checkpoint metadata includes the feature extractor configuration:
@@ -270,3 +351,24 @@ final_model_checkpoint.pt
 val_predictions.csv
 val_predictions_epoch_*.csv  # only with --save_epoch_val_predictions
 ```
+
+## Split Modes
+
+Use `--split_mode sample` for the primary held-out-video signal. It keeps all
+rows from the same `sample_id` on one side of the split.
+
+Use `--split_mode row` only as a same-video interpolation diagnostic. Row split
+can share a source video between train and validation, so low row-split MAE is
+not evidence of held-out-video generalization.
+
+## Current Caveats
+
+- The predictor outputs one timestep-cache SeaCache threshold only. It does not
+  predict block-cache or CFG-cache thresholds.
+- Existing two-condition checkpoints from before `target_speedup` was added are
+  incompatible with the current three-condition model constructors.
+- Offline `candidate_inverse` MAE is not the same as online target-control
+  quality. Final claims still need online adaptive SeaCache validation against
+  fixed-threshold controls on the same prompts.
+- Large trace data, feature caches, raw-latent shards, and checkpoints should
+  stay under `/hy-tmp`, not inside the git repository.

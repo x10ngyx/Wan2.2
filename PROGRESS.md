@@ -259,6 +259,7 @@ Detailed implementation notes, launch commands, intermediate checks, and full ta
 - 2026-07-04: located Wan2.2 SeaCache Ali-10 prompt-02 artifacts. Complete Ali-10 UniPC run root is `/hy-tmp/wan22_seacache_unipc_ali10_50step_45f_480p_20260627_023222`; prompt-02 sample id is `ali_002`, with videos under `baseline/ali_002.mp4` and `seacache/th_*/ali_002.mp4`. Earlier DPM++ prompt-02 pilot roots are `/hy-tmp/wan22_seacache_prompt02_dense_20260611_204826` and `/hy-tmp/wan22_seacache_prompt02_highthr_20260612_000218`.
 - 2026-07-04: checked DPM++ prompt-02 pilot parameters against the full Ali-10 UniPC prompt-02 run. Prompt text, seed `42`, size `832*480`, frame count `45`, steps `50`, shift `12.0`, guide scale `(3.0, 4.0)`, SeaCache threshold parameters, block cache disabled, and CFG cache disabled all match. The material experimental difference is `sample_solver=dpm++` for the pilot versus `sample_solver=unipc` for the Ali-10 run; DPM++ reused a matching older DPM++ baseline from `/hy-tmp/wan22_zeus_threshold_reuse_interp_10prompt_5th_20260608_195427`.
 - 2026-07-08: prepared current adaptive predictor speedup-condition code, reports, logs, and experiment-result symlinks for repository handoff. Session log: `logs/session_20260708_commit_push.md`.
+- 2026-07-08: reviewed `adaptive_threshold_predictor/` for handoff clarity, expanded its README with a file map/current workflow/caveats, and fixed misleading script help/output text. Session log: `logs/session_20260708_adaptive_threshold_predictor_handoff_review.md`.
 
 ## Common Errors And Solutions
 

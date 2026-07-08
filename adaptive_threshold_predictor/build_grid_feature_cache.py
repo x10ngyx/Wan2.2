@@ -18,7 +18,7 @@ from adaptive_threshold_predictor.data import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Precompute fixed 3D grid latent features for MiniDiT training."
+        description="Precompute fixed 3D grid latent features for the grid_mlp baseline."
     )
     parser.add_argument("--data_root", type=Path, default=DEFAULT_DATA_ROOT)
     parser.add_argument("--out_dir", type=Path, required=True)

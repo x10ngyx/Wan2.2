@@ -26,7 +26,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shard_size", type=int, default=512)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--num_workers", type=int, default=2)
-    parser.add_argument("--resume_existing", action="store_true")
     return parser.parse_args()
 
 
@@ -105,7 +104,6 @@ def main() -> None:
         latents = batch["latent"]
         batch_size = int(latents.shape[0])
         start_index = processed
-        batch_offsets = list(range(batch_size))
         cursor = 0
         while cursor < batch_size:
             take = min(args.shard_size - shard_count, batch_size - cursor)
