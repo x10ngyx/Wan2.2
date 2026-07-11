@@ -1,0 +1,30 @@
+# Session 2026-07-10 predictor RL IQL framework
+
+- Read `PROGRESS.md` at session start as required.
+- Implemented standalone `predicotr-rl/` code for the first offline IQL version of adaptive SeaCache predictor training.
+- Kept the scope aligned with the user clarification: same adaptive SeaCache objective as the previous predictor, one synchronized cond/uncond action per denoising step, and `Z_t` represented by the five existing latent feature sets.
+- Added `predicotr-rl/data.py` to build transitions from the OpenVid-100 SeaCache feature cache and summary table, including synchronized skip labels parsed from `seacache_skipping_path`.
+- Added `predicotr-rl/models.py` and `predicotr-rl/train_iql.py` with independent V/Q1/Q2/policy MLPs, expectile V updates, double-Q Bellman updates, and advantage-weighted policy updates.
+- Added `predicotr-rl/policy.py`, a lightweight checkpoint loader that accepts five-feature inputs and returns deterministic synchronized skip/recompute decisions.
+- Tightened state construction to match the PDF exactly: `[timestep, Z_t, Speedup_target, Speedup_current, C_t]`. Removed the extra `reuse_ratio_so_far` and `remaining_steps_norm` scalars from both training data construction and the policy loader. The state is now `640` five-feature dimensions plus `4` PDF scalar fields. `Speedup_current` uses full-task accounting: completed steps use observed reuse/recompute proxy cost, while unfinished steps are counted as full recompute cost.
+- Calibrated the `Speedup_current` cost proxy on OpenVid-100 measured speedup. `reuse_cost_ratio=0.05` had about `0.139x` MAE and `5.01%` MAPE, with high-threshold speedup overestimated by up to about `0.33x`. The fitted default `reuse_cost_ratio=0.081` has about `0.0064x` MAE and `0.32%` MAPE, so the default was updated in `data.py`, `train_iql.py`, and `policy.py`.
+- Changed best-checkpoint selection from minimum validation `pi_loss` to maximum validation `policy_accuracy`; `pi_loss` remains logged as a diagnostic.
+- Revised reward construction to strictly follow `doc/RL4Acc.pdf`:
+  - immediate reward is `-lambda_latent * MSE(z_{t-1}, z_gt_{t-1}) - lambda_recompute * (1 - action)`;
+  - terminal reward is `lambda_psnr * PSNR(Video_pred, Video_gt) - lambda_speedup * abs(final_proxy_speedup - target_speedup)`;
+  - each offline trajectory is duplicated across local `--target_speedup_offsets` around its measured speedup, so the speedup target penalty is nonzero without pairing a behavior trajectory with far-away targets;
+  - per-step latent MSE is computed from paired `seacache_step_inputs` and `baseline_step_inputs`, with an optional cache tensor;
+  - step `0..48` compare against `step_{i+1}.pt['latent']`, while step `49` compares against `trace_done.pt['final_latent']`.
+- Validation:
+  - `python -m py_compile predicotr-rl/data.py predicotr-rl/models.py predicotr-rl/policy.py predicotr-rl/train_iql.py`
+  - CPU smoke training: `python predicotr-rl/train_iql.py --out_dir /hy-tmp/wan22_iql_seacache_smoke_cpu --device cpu --torch_threads 1 --max_examples 2000 --epochs 1 --batch_size 128 --hidden_dim 64 --num_layers 1 --log_every 0`
+  - Strict-reward CPU smoke training: `python predicotr-rl/train_iql.py --out_dir /hy-tmp/wan22_iql_seacache_strict_reward_smoke_cpu --device cpu --torch_threads 1 --max_examples 80 --target_speedup_offsets -0.15 0.0 0.15 --latent_mse_cache /hy-tmp/wan22_iql_latent_mse_smoke_train.pt --epochs 1 --batch_size 64 --hidden_dim 32 --num_layers 1 --log_every 0`
+  - PDF-state CPU smoke training: `python predicotr-rl/train_iql.py --out_dir /hy-tmp/wan22_iql_seacache_pdf_state_smoke_cpu --device cpu --torch_threads 1 --max_examples 80 --target_speedup_offsets -0.15 0.0 0.15 --latent_mse_cache /hy-tmp/wan22_iql_latent_mse_smoke_train.pt --epochs 1 --batch_size 64 --hidden_dim 32 --num_layers 1 --log_every 0`
+  - Full-task `Speedup_current` smoke training: `python predicotr-rl/train_iql.py --out_dir /hy-tmp/wan22_iql_seacache_fulltask_speedup_smoke_cpu --device cpu --torch_threads 1 --max_examples 80 --target_speedup_offsets -0.15 0.0 0.15 --latent_mse_cache /hy-tmp/wan22_iql_latent_mse_smoke_train.pt --epochs 1 --batch_size 64 --hidden_dim 32 --num_layers 1 --log_every 0`
+  - Final-latent check: direct `load_or_compute_latent_mse` call for `step_index=49` returned nonzero MSE from `trace_done.pt['final_latent']`; small training smoke with `max_examples=10` also completed.
+  - Best-checkpoint metric smoke: `python predicotr-rl/train_iql.py --out_dir /hy-tmp/wan22_iql_best_accuracy_smoke_cpu --device cpu --torch_threads 1 --max_examples 2000 --target_speedup_offsets -0.15 0.0 0.15 --latent_mse_cache /hy-tmp/wan22_iql_latent_mse_best_accuracy_smoke.pt --epochs 1 --batch_size 128 --hidden_dim 32 --num_layers 1 --log_every 0`; resulting `metrics.json` records `best_checkpoint_metric: val.policy_accuracy`.
+  - Local-target smoke: `python predicotr-rl/train_iql.py --out_dir /hy-tmp/wan22_iql_local_target_smoke_cpu --device cpu --torch_threads 1 --max_examples 10 --target_speedup_offsets -0.3 -0.15 0 0.15 0.3 --latent_mse_cache /hy-tmp/wan22_iql_latent_mse_trace_done_smoke_train.pt --epochs 1 --batch_size 16 --hidden_dim 32 --num_layers 1 --log_every 0`.
+  - Policy-loader smoke loaded `/hy-tmp/wan22_iql_seacache_smoke_cpu/best_model.pt` and returned an action/probability from cached features.
+- Added `predicotr-rl/prepare_data.py` for full `latent_mse_to_baseline.pt` preprocessing. Full preprocessing was intentionally not completed after user instruction because this session has no visible GPU and CPU-only latent `.pt` loading/MSE computation is too slow for the full 50,000-row strict-reward cache. Temporary smoke caches were removed; no `prepare_data.py` or `train_iql.py` process is running.
+- Reward defaults were rescaled after checking term magnitudes: `lambda_latent=5.0`, `lambda_recompute=0.04`, `lambda_psnr=1.0`, and `lambda_speedup=10.0`. This keeps raw PSNR dominant but gives speed-target miss, latent drift, and recompute cost visible weight.
+- Wan2.2 runtime integration was not changed in this session.

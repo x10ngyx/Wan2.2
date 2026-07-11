@@ -7,6 +7,108 @@ This file is intentionally kept concise. It records only:
 
 Detailed implementation notes, launch commands, intermediate checks, and full tables should live in `reports/`, `logs/`, and archived experiment roots.
 
+## Session Notes
+
+### 2026-07-11 Predictor-RL Speedup-Priority Defaults
+
+- Changed the offline-IQL default `lambda_speedup` from `10.0` to `30.0` in both `predicotr-rl/data.py` and `train_iql.py`, so direct data-builder callers and CLI runs use the same target-speed reward scale. This makes a `0.3x` target-speed miss cost `9` reward units.
+- Changed default IQL `beta` from `3.0` to `1.5`. Because advantages are batch-standardized before exponentiation, this reduces the prior extremely concentrated advantage-weighted imitation update while preserving reward-based trajectory preference.
+- Retained `lambda_latent=5.0`, `lambda_recompute=0.04`, `lambda_psnr=1.0`, `reuse_cost_ratio=0.081`, `tau=0.7`, `gamma=1.0`, and `rho=0.995`. The preceding scale analysis found these values reasonable or provisionally balanced.
+- Updated `predicotr-rl/README.md` to state the speedup-priority objective and numerical rationale. Full GPU training and closed-loop validation remain pending visible GPU access.
+
+### 2026-07-11 Predictor-RL Hyperparameter Scale Analysis
+
+- Quantified the current defaults against all `1000` OpenVid-100 SeaCache candidates. The `reuse_cost_ratio=0.081` final-speedup proxy is well calibrated: absolute error mean `0.0064x`, median `0.0059x`, and max `0.0411x`.
+- With default local offsets and `lambda_speedup=10`, terminal speed penalties have median `1.538` and mean `1.768`, versus raw PSNR mean `26.47` and standard deviation `7.78`. This supplies local preference signal but does not strongly enforce low/mid target speeds where the quality cliff is steep.
+- Adjacent trajectory break-even analysis: the median speedup weight needed to prefer the faster trace at its faster target is about `30.1` for `0.10 -> 0.15`, `17.2` for `0.15 -> 0.20`, `9.4` for `0.20 -> 0.25`, then below `9` after `0.25 -> 0.30`. Treat `lambda_speedup=10` as a moderate/high-speed default, not a uniformly calibrated target-following weight; run `10/20/30` ablations before changing it.
+- The available 2,000-step latent-MSE smoke cache indicates `lambda_latent=5` yields trajectory penalty median `1.02` (mean `1.44`), comparable to the full-trajectory recompute penalty median `0.82` (mean `0.90`) at `lambda_recompute=0.04`; retain these pending full-cache confirmation.
+- `tau=0.7`, `gamma=1`, `rho=0.995`, `3e-4` learning rate, and the 30-epoch/256-batch training budget are numerically conventional. The main optimizer concern is batch-standardized advantage with `beta=3`: under a unit-normal approximation it gives `exp(3A)` weights, caps about `6.2%` of samples at `100`, and has mean clipped weight about `12.7`. Ablate `beta=1/1.5/3` (or remove advantage standardization) rather than treating `3` as scale-invariant.
+- No predictor code or defaults were changed. GPU remains unavailable, so no full training/closed-loop validation was run.
+
+### 2026-07-11 Predictor-RL Readthrough
+
+- Read the standalone `predicotr-rl/` implementation and its prior session records; no RL, Wan2.2 runtime, checkpoint, dataset, or experiment artifact was changed.
+- Confirmed the current scope is an offline-IQL SeaCache timestep policy: historical fixed-threshold traces supply synchronized per-step skip/recompute labels, and deployment is limited to the `SeaCacheRLPolicy` checkpoint loader.
+- The train/runtime state is five cached latent feature tensors plus normalized timestep, target speedup, projected full-task speedup, and consecutive-skip count. `action=1` means reuse/skip; `action=0` means recompute.
+- No production checkpoint or Wan2.2 cache integration exists. Existing `/hy-tmp/wan22_iql_*` checkpoints are CPU smoke artifacts only. The host currently reports no visible NVIDIA GPU, so no full latent-MSE preparation, GPU training, or closed-loop quality/speed evaluation was run.
+
+### 2026-07-10 Predictor-RL Framework Review
+
+- Reviewed `predicotr-rl/` from method, implementation, and default-parameter perspectives; no training, inference, or Wan2.2 runtime code was changed.
+- Main assessment: the current directory is a useful offline-IQL prototype, but it should not yet be treated as a validated adaptive predictor because it learns from fixed SeaCache threshold trajectories and has no closed-loop Wan2.2 evaluation.
+- Key concerns: reward scale is dominated by raw PSNR versus small target-speedup penalties, checkpoint selection uses behavior-action accuracy instead of speed/quality objective performance, advantage normalization changes standard IQL/AWAC weighting semantics, target-speedup augmentation is local and weak, and full bundle construction can be slow without cached latent-MSE/state preprocessing.
+
+### 2026-07-10 RL4Acc Terminal Speedup Proxy Alignment
+
+- Updated `predicotr-rl/data.py` so the terminal speedup penalty uses the final action-cost proxy computed from the full skip/recompute sequence, instead of using measured `summary.csv` speedup.
+- Rationale: `Speedup_current` in the state and `R_terminal` speedup penalty now share the same proxy dynamics; measured speedup remains stored as `achieved_speedups` for analysis.
+- Updated `predicotr-rl/README.md` to document `final_proxy_speedup` in the terminal reward.
+- Validation: `python -m py_compile predicotr-rl/data.py predicotr-rl/train_iql.py predicotr-rl/policy.py predicotr-rl/models.py` passed.
+
+### 2026-07-10 RL4Acc Method Sanity Review
+
+- Reviewed `doc/RL4Acc.pdf` with `pypdf` text extraction and compared it against the current `predicotr-rl/` implementation.
+- Assessment: the IQL update formulas, binary skip action, state scalars, latent-MSE immediate reward, recompute penalty, and terminal PSNR/speedup reward are broadly aligned with the PDF.
+- Main caveat: this should be described as a faithful offline-IQL prototype based on existing SeaCache traces, not a strict executable reproduction of an online denoising environment. The implementation reconstructs transitions from fixed threshold trajectories, duplicates each trajectory over local target-speedup offsets around its measured speedup, uses a calibrated speedup proxy, and has no closed-loop Wan2.2 runtime evaluation yet.
+- Method risks to track: limited action coverage from fixed threshold traces, possible distribution shift when the learned policy composes skip/recompute paths not present in data, reward-scale balance between PSNR and latent/recompute/speedup penalties, proxy-vs-real speedup mismatch, and checkpoint selection by validation policy accuracy rather than target PSNR/speedup performance.
+
+### 2026-07-10 RL4Acc Predictor-RL Formula Audit
+
+- Audited `doc/RL4Acc.pdf` against the actual implementation directory `predicotr-rl/` (the workspace does not currently contain `predictor-rl/`).
+- Conclusion: the current implementation follows the PDF's high-level offline-IQL method and the main math formulas for state layout, binary skip action, latent-MSE/recompute immediate reward, terminal PSNR/speedup reward, V expectile loss, double-Q Bellman update, and advantage-weighted policy update.
+- Not identical in execution semantics: transitions are reconstructed from fixed precomputed SeaCache traces rather than produced by an online denoising environment; each trace is duplicated over local target-speedup offsets around its measured speedup; the PDF's `z_{t-1}` reward term is concretely implemented by comparing stored `step_{t+1}` candidate/baseline latents and final `trace_done.pt` latents; and the implementation uses sampled traces rather than one threshold group per prompt.
+- PDF-unspecified implementation choices include the five concrete latent feature sets, cond/uncond action unioning, full-task speedup proxy with calibrated reuse cost, concrete MLP architecture/optimizer/hyperparameters, state normalization, sample-level train/val split, checkpoint/export format, policy probability thresholding, cached latent-MSE files, and logging/evaluation metrics.
+
+### 2026-07-10 RL4Acc Current-Code Recheck
+
+- Rechecked `doc/RL4Acc.pdf` against the current `predicotr-rl/` source. This supersedes the earlier conformance note for the older intermediate version because the current code now includes the PDF-style latent-MSE immediate reward, terminal speedup-target penalty, and 4-scalar state layout.
+- Current explicit mismatches are mostly about execution/data semantics rather than IQL formulas: training reconstructs transitions from precomputed SeaCache trace rows instead of running the PDF's denoising transition online; each trace is duplicated over local target-speedup offsets around its measured speedup; the implementation consumes fixed SeaCache trace candidates rather than the PDF's simpler "one threshold group per prompt" data statement.
+- Current PDF-unspecified additions include five concrete latent feature sets, cond/uncond action unioning, current-speedup proxy cost model, target-Q soft updates, AdamW/MLP architecture details, state normalization, sample-level splits, checkpoint/export format, policy probability thresholding, latent-MSE cache, and training/evaluation logging.
+- No Wan2.2 runtime code, RL implementation code, checkpoints, datasets, or experiments were changed during this recheck.
+
+### 2026-07-10 RL4Acc Implementation Conformance Check
+
+- Compared `doc/RL4Acc.pdf` against the actual implementation directory `predicotr-rl/` (note spelling; `predictor-rl/` does not exist in the current workspace).
+- Assessment: the implementation follows the PDF's high-level offline IQL framework, including state-conditioned binary skip policy, V/Q/policy MLPs, expectile V update, double-Q Bellman update, and advantage-weighted policy update with batch-normalized advantage.
+- Not fully identical to the PDF formulas: reward was simplified to recompute penalty plus terminal normalized PSNR; the PDF's latent MSE immediate term and terminal achieved-vs-target speedup penalty are not implemented. The PDF's state vector was extended with reuse ratio and remaining-step fraction, and state transitions are reconstructed from fixed trace rows rather than simulated by the denoising dynamics described in the proposal.
+- No Wan2.2 runtime code, RL implementation code, checkpoints, datasets, or experiments were changed during this conformance check.
+
+### 2026-07-10 Predictor RL IQL Framework
+
+- Added standalone `predicotr-rl/` prototype for offline IQL training of adaptive SeaCache skip/recompute decisions. The implementation keeps cond/uncond decisions synchronized at one action per denoising step and uses the existing five latent feature sets (`latent_pool`, `temporal_mean`, `temporal_var`, `frame_diff_mean`, `frame_diff_var`) as `Z_t`.
+- Implemented feature-cache dataset construction from OpenVid-100 SeaCache traces, synchronized action parsing from `seacache_skipping_path`, scalar progress features, V/Q/policy MLPs, expectile V loss, double-Q Bellman updates, advantage-weighted policy loss, checkpoint saving, and a lightweight `SeaCacheRLPolicy` loader.
+- State construction was tightened to match `doc/RL4Acc.pdf` exactly: `[timestep, Z_t, Speedup_target, Speedup_current, C_t]`. The earlier extra `reuse_ratio_so_far` and `remaining_steps_norm` helper scalars were removed. `Speedup_current` now uses full-task accounting: completed steps use observed reuse/recompute proxy cost, while unfinished steps are counted as full recompute cost.
+- Calibrated the `Speedup_current` proxy against OpenVid-100 measured speedup. The previous `reuse_cost_ratio=0.05` overestimated final speedup with about `5.01%` MAPE; fitted `reuse_cost_ratio=0.081` reduces proxy MAPE to about `0.32%`, so the default was updated to `0.081`.
+- IQL `best_model.pt` selection now uses maximum validation `policy_accuracy` instead of minimum validation `pi_loss`; `pi_loss` remains logged as a training diagnostic.
+- Updated reward construction to match `doc/RL4Acc.pdf`: immediate reward now includes `-lambda_latent * MSE(z_{t-1}, z_gt_{t-1})` from paired SeaCache/baseline step latents plus recompute penalty, and terminal reward now uses raw PSNR minus `lambda_speedup * abs(final_proxy_speedup - target_speedup)`. Each offline trajectory is duplicated over local target-speedup offsets so the speedup penalty has nonzero but behavior-near training signal.
+- Target-speedup augmentation was changed from a global fixed grid for every trajectory to local offsets around each trajectory's measured speedup. Default offsets are `[-0.3, -0.15, 0, 0.15, 0.3]` with targets clipped to `[1.0, 4.0]`, so a `2.4x` trajectory uses targets about `2.1/2.25/2.4/2.55/2.7`.
+- The latent MSE target for step `0..48` uses `step_{i+1}.pt['latent']`; for final step `49`, it now uses `trace_done.pt['final_latent']` instead of falling back to `step_049.pt`.
+- Added `predicotr-rl/prepare_data.py` for precomputing `latent_mse_to_baseline.pt`, but full latent-MSE preprocessing was not run to completion because the current session has no visible GPU and CPU-only `.pt` latent loading/MSE computation is too slow for the full 50,000-row cache. Training code is ready; full strict-reward training should wait for GPU or a faster preprocessing path.
+- Reward defaults were rescaled after checking term magnitudes: `lambda_latent=5.0`, `lambda_recompute=0.04`, `lambda_psnr=1.0`, and `lambda_speedup=10.0`.
+- Validation: Python compile passed for all new files; CPU smoke training with `max_examples=2000`, one epoch, and `--torch_threads 1` produced `best_model.pt`/`final_model.pt`; policy-loader smoke returned a skip probability/action from the smoke checkpoint.
+- Strict-reward validation: CPU smoke training with `max_examples=80`, target speedups `1.5 2.5`, and a temporary latent-MSE cache completed one epoch and produced checkpoints.
+- Runtime integration into Wan2.2 inference was intentionally not changed in this step; the new directory provides the RL-trained network and loader for later replacement of the previous predictor network.
+
+### 2026-07-10 RL4Acc Predictor RL Proposal Review
+
+- Read `doc/RL4Acc.pdf`, a 3-page CodiMD proposal for training an offline IQL policy that chooses per-denoising-step skip/recompute actions conditioned on timestep, latent features, target speedup, current achieved speedup, and consecutive-skip count.
+- Assessment: the RL framing matches the sequential nature of cache decisions better than fixed-threshold inverse prediction, but the current OpenVid-100 fixed-threshold trajectories are likely too narrow for stable offline RL unless the action coverage is enriched with multiple diverse trajectories per prompt or a simulator/replay environment.
+- No Wan2.2 code, experiments, datasets, predictor checkpoints, or cache logic were changed.
+
+### 2026-07-08 OpenVid-100 HF Dataset OSS Bundle
+
+- Prepared a Hugging Face-ready dataset layout from `/hy-tmp/openvid_100_seacache_trace_data` without exposing the original multi-machine shard layout. Public paths use `prompt_001` through `prompt_100` and `threshold_0p10` through `threshold_0p80`.
+- Staging root: `/hy-tmp/hf_staging/wan22_openvid100_seacache_trace`.
+- OSS transfer bundle root: `/hy-tmp/oss_upload/wan22_openvid100_seacache_trace_20260708`, size about `134G`, containing `27` tar archives plus `HOW_TO_UPLOAD_TO_HUGGINGFACE.md`, `archive_manifest.json`, and `checksums/archive_sha256s.txt`.
+- Dataset indexes include `100` prompts, `1000` candidate rows, and `50000` step-level training rows split into `10` Parquet shards plus JSONL mirrors. Each training row includes prompt/threshold/step identifiers, reuse/recompute decision, branch keys, cache metrics, raw latent `.pt` path, baseline/candidate video paths, logs, PSNR, elapsed time, and speedup.
+- Validation completed: staging `scripts/verify_dataset.py` passed, and `sha256sum -c checksums/archive_sha256s.txt` passed for all archives. One source PSNR text log was missing/NaN for `prompt_034`, `threshold_0p10`; PSNR JSON and summary metrics are present.
+- OSS upload itself was not run because this machine currently has no `ossutil/ossutil64` command configured and no bucket/endpoint/prefix was provided.
+
+### 2026-07-08 Q-learning Concept Explanation
+
+- User asked for an example-based explanation of Q-learning.
+- No Wan2.2 code, experiments, datasets, or cached artifacts were changed.
+
 ## Experiment Results
 
 ### Fixed ZEUS Timestep Cache, Ali-10, DPM++
@@ -240,6 +342,15 @@ Detailed implementation notes, launch commands, intermediate checks, and full ta
 - Report: `reports/report_predictor_speedup.md`, with plot `reports/assets/predictor_speedup_training_loss_curves.svg`.
 - Conclusion: target speedup controls threshold/reuse and actual speed, but quality calibration remains dataset-dependent. VBench10 target 28 with target speedup `1.4` is well calibrated (`1.401x`, `27.930 dB`); aggressive speed targets undershoot PSNR sharply on VBench10.
 
+### Predictor Max-Condition Behavior Probe
+
+- Roots: `/hy-tmp/wan22_predictor_max_condition_behavior_20260708`, `/hy-tmp/wan22_predictor_condition_sensitivity_probe_gpu_20260708`
+- Description: probed whether speedup-conditioned threshold prediction depends on latent/timestep/PSNR or mostly on `target_speedup`, using completed online MiniDiT traces, a direct speedup-only condition-only intervention, and a GPU raw-latent MiniDiT intervention. Added reusable raw-latent MiniDiT probe script `adaptive_threshold_predictor/probe_condition_sensitivity.py`. In the GPU run, real train/val latents were sampled by source `step_index=0,12,24,36,49` and bound to their source timestep; random matched-normal latents were reported separately as OOD.
+- Results: online MiniDiT traces contain `3,600` predictor calls. Categorical mean R2 for predicted threshold was `0.999404` using `target_speedup` alone, `0.999557` with `target_speedup + step_index`, `0.999601` with `target_speedup + sample_id`, and unchanged at `0.999404` with `target_psnr + target_speedup`. In the speedup-only condition-only intervention, fixed `target_speedup=3.5` while varying pseudo latent/timestep/PSNR produced threshold range `0.000215`; fixed `target_psnr=45` while varying speedup produced threshold range `0.689347`. In the GPU raw-latent MiniDiT probe, fixed `target_speedup=3.5` on source-bound real latents produced mean threshold `0.766872` with range `0.118354`; mean threshold decreased from `0.793165` at PSNR `18` to `0.723120` at PSNR `45`. Fixed `target_psnr=45` while varying speedup produced mean thresholds from `0.100410` at speedup `1.1` to `0.723120` at speedup `3.5`, range `0.671022`.
+- Report: `reports/report_predictor_max_condition_behavior.md`
+- Focused report: `reports/report_max_speedup_psnr.md`
+- Conclusion: current speedup-conditioned inverse-task predictors are strongly dominated by `target_speedup`, especially when speedup is varied directly. The actual MiniDiT checkpoint is not literally independent of PSNR: at fixed high `target_speedup=3.5`, higher requested PSNR lowers the predicted threshold. Latent/source-step effects are smaller than the speedup sweep and are reported with source timestep binding to avoid OOD timestep-latent pairs.
+
 ### Reports and Readouts
 
 - Cache summary reports are under `reports/`, especially `report_cache_experiments_summary.md`, `report_vbench10_zeus_threshold_seacache.md`, and `report_sampling_solver_impact_zeus_seacache_20260630.md`.
@@ -252,6 +363,8 @@ Detailed implementation notes, launch commands, intermediate checks, and full ta
   - `reports/report_gated_multifeature_mlp_predictor_comprehensive_20260630.md`
   - `reports/report_adaptive_predictor_mini_dit_vs_gated_mlp_comparison_20260630.md`
   - `reports/report_predictor_speedup.md`
+  - `reports/report_predictor_max_condition_behavior.md`
+  - `reports/report_max_speedup_psnr.md`
 - Conclusion: reports should be treated as the detailed source of tables and plots; this file is only the short handoff index.
 
 ### Path Lookup Notes
@@ -260,6 +373,7 @@ Detailed implementation notes, launch commands, intermediate checks, and full ta
 - 2026-07-04: checked DPM++ prompt-02 pilot parameters against the full Ali-10 UniPC prompt-02 run. Prompt text, seed `42`, size `832*480`, frame count `45`, steps `50`, shift `12.0`, guide scale `(3.0, 4.0)`, SeaCache threshold parameters, block cache disabled, and CFG cache disabled all match. The material experimental difference is `sample_solver=dpm++` for the pilot versus `sample_solver=unipc` for the Ali-10 run; DPM++ reused a matching older DPM++ baseline from `/hy-tmp/wan22_zeus_threshold_reuse_interp_10prompt_5th_20260608_195427`.
 - 2026-07-08: prepared current adaptive predictor speedup-condition code, reports, logs, and experiment-result symlinks for repository handoff. Session log: `logs/session_20260708_commit_push.md`.
 - 2026-07-08: reviewed `adaptive_threshold_predictor/` for handoff clarity, expanded its README with a file map/current workflow/caveats, and fixed misleading script help/output text. Session log: `logs/session_20260708_adaptive_threshold_predictor_handoff_review.md`.
+- 2026-07-08: probed predictor behavior near high speedup/high PSNR targets; GPU raw-latent bound-timestep probe shows speedup dominates, while MiniDiT still lowers threshold as requested PSNR increases at fixed high speedup. Session log: `logs/session_20260708_predictor_max_condition_behavior.md`.
 
 ## Common Errors And Solutions
 
